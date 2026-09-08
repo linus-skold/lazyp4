@@ -3,7 +3,26 @@
 A terminal UI for Perforce (Helix Core), in the style of lazygit: browse
 changelists and their files in panels, and read diffs in the shell.
 
-Status: early. The native P4API binding layer works; the UI is not built yet.
+Status: early. You can browse pending, shelved and submitted changelists and
+their files. Diffs are not wired up yet.
+
+```powershell
+cargo run -p lazyp4
+```
+
+| Key | Action |
+| --- | --- |
+| `j` `k`, `↓` `↑` | move |
+| `g` `G` | first, last |
+| `Tab`, `[` `]` | cycle panel |
+| `1` `2` `3` | jump to panel |
+| `r` | refresh |
+| `x` | command log — every P4API call made |
+| `?` | help |
+| `q` | quit |
+
+lazyp4 uses the ambient `P4PORT`, `P4USER` and `P4CLIENT`, so run it from a
+workspace directory with a `p4config.txt` the same way you would run `p4`.
 
 ## Build
 
@@ -68,6 +87,7 @@ the static CRT and — on an `ssl:` port — the TLS handshake.
 | --- | --- |
 | `crates/p4-sys` | `cxx` bridge to `ClientApi`/`ClientUser`; the only crate that sees C++ |
 | `crates/p4` | Typed commands and models — changelists, opened files, revisions |
+| `crates/lazyp4` | The `ratatui` binary: panels, key routing, Perforce worker thread |
 
 ```powershell
 cargo run -p p4 --example changes
