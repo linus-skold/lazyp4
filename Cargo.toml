@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/p4-sys"]
+members = ["crates/p4-sys", "crates/p4"]
 
 [workspace.package]
 version = "0.1.0"

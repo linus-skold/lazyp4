@@ -1,0 +1,11 @@
+[package]
+name = "p4"
+description = "A typed Rust API over the Helix Core C++ API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+p4-sys = { path = "../p4-sys" }
+cxx.workspace = true

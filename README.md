@@ -67,3 +67,10 @@ the static CRT and — on an `ssl:` port — the TLS handshake.
 | Crate | Contents |
 | --- | --- |
 | `crates/p4-sys` | `cxx` bridge to `ClientApi`/`ClientUser`; the only crate that sees C++ |
+| `crates/p4` | Typed commands and models — changelists, opened files, revisions |
+
+```powershell
+cargo run -p p4 --example changes
+```
+
+lists the pending and recent submitted changelists of the current workspace.

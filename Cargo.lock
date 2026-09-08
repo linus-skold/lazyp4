@@ -161,6 +161,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "p4"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "p4-sys",
+]
+
+[[package]]
 name = "p4-sys"
 version = "0.1.0"
 dependencies = [
