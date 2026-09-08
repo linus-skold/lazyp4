@@ -46,7 +46,10 @@ pub enum Request {
 pub enum Event {
     Input(crossterm::event::Event),
     Info(ServerInfo),
-    Changes(Vec<Changelist>),
+    Changes {
+        pending: Vec<Changelist>,
+        submitted: Vec<Changelist>,
+    },
     Files {
         change: ChangeId,
         files: Vec<FileEntry>,
@@ -165,7 +168,7 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 }
 
                 let _ = events.send(Event::Log("changes -l -s pending".into()));
-                let mut all = match p4.changes(&ChangeFilter::pending()) {
+                let pending = match p4.changes(&ChangeFilter::pending()) {
                     Ok(v) => v,
                     Err(e) => {
                         let _ = events.send(Event::Error(format!("changes: {e}")));
@@ -173,15 +176,16 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                     }
                 };
 
-                let _ = events.send(Event::Log("changes -l -s submitted -m 25".into()));
-                match p4.changes(&ChangeFilter::submitted(25)) {
-                    Ok(v) => all.extend(v),
+                let _ = events.send(Event::Log("changes -l -s submitted -m 50".into()));
+                let submitted = match p4.changes(&ChangeFilter::submitted(50)) {
+                    Ok(v) => v,
                     Err(e) => {
                         let _ = events.send(Event::Error(format!("changes: {e}")));
+                        Vec::new()
                     }
-                }
+                };
 
-                let _ = events.send(Event::Changes(all));
+                let _ = events.send(Event::Changes { pending, submitted });
             }
             Request::LoadFiles {
                 change,

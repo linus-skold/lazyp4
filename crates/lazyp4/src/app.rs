@@ -1,7 +1,7 @@
 //! Application state and key routing.
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{diff, ChangeId, Changelist, FileDiff, ServerInfo};
+use p4::{diff, ChangeId, ChangeStatus, Changelist, FileDiff, ServerInfo};
 
 use crate::worker::{Event, FileEntry, Request, Worker};
 
@@ -11,49 +11,84 @@ pub enum Action {
     OpenInHunk(String),
 }
 
+/// The panels, in tab order. The layout runs top to bottom down the left
+/// column, with the diff filling the right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
-    Changelists,
-    Files,
     Status,
+    Files,
+    Changelists,
+    History,
     Diff,
 }
 
 impl Panel {
-    /// Tab order, and the source of the number key each panel answers to: the
-    /// panel at index 0 is `1`. Keep them in step — the number is drawn in the
-    /// panel's own title.
-    pub const ORDER: [Panel; 4] = [
-        Panel::Changelists,
-        Panel::Files,
+    pub const ORDER: [Panel; 5] = [
         Panel::Status,
+        Panel::Files,
+        Panel::Changelists,
+        Panel::History,
         Panel::Diff,
     ];
 
-    fn index(self) -> usize {
-        Self::ORDER.iter().position(|p| *p == self).unwrap_or(0)
-    }
-
     fn step(self, by: isize) -> Panel {
+        let i = Self::ORDER.iter().position(|p| *p == self).unwrap_or(0) as isize;
         let n = Self::ORDER.len() as isize;
-        Self::ORDER[((self.index() as isize + by).rem_euclid(n)) as usize]
+        Self::ORDER[((i + by).rem_euclid(n)) as usize]
     }
 
-    /// The key that focuses this panel, as a digit.
-    pub fn number(self) -> usize {
-        self.index() + 1
+    /// The key that focuses this panel. The diff takes `0` because it sits
+    /// apart from the numbered column.
+    pub fn number(self) -> u8 {
+        match self {
+            Panel::Status => 1,
+            Panel::Files => 2,
+            Panel::Changelists => 3,
+            Panel::History => 4,
+            Panel::Diff => 0,
+        }
     }
 
-    pub fn from_number(n: usize) -> Option<Panel> {
-        Self::ORDER.get(n.checked_sub(1)?).copied()
+    pub fn from_number(n: u8) -> Option<Panel> {
+        Self::ORDER.into_iter().find(|p| p.number() == n)
     }
 
     pub fn title(self) -> &'static str {
         match self {
-            Panel::Changelists => "Changelists",
-            Panel::Files => "Files",
             Panel::Status => "Status",
+            Panel::Files => "Files",
+            Panel::Changelists => "Changelists",
+            Panel::History => "History",
             Panel::Diff => "Diff",
+        }
+    }
+}
+
+/// Tabs of the Changelists panel, cycled with `[` and `]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeTab {
+    /// Pending on this workspace, with nothing shelved.
+    Local,
+    /// Pending on this workspace, with content shelved on the server.
+    Shelved,
+    /// Pending on somebody else's workspace.
+    Others,
+}
+
+impl ChangeTab {
+    pub const ORDER: [ChangeTab; 3] = [ChangeTab::Local, ChangeTab::Shelved, ChangeTab::Others];
+
+    fn step(self, by: isize) -> ChangeTab {
+        let i = Self::ORDER.iter().position(|t| *t == self).unwrap_or(0) as isize;
+        let n = Self::ORDER.len() as isize;
+        Self::ORDER[((i + by).rem_euclid(n)) as usize]
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            ChangeTab::Local => "Local",
+            ChangeTab::Shelved => "Shelved",
+            ChangeTab::Others => "Others",
         }
     }
 }
@@ -73,8 +108,19 @@ pub struct App {
     pub busy: bool,
 
     pub info: Option<ServerInfo>,
-    pub changes: Vec<Changelist>,
+
+    /// Every pending changelist; the tabs are views onto this.
+    pub pending: Vec<Changelist>,
+    pub tab: ChangeTab,
     pub change_sel: usize,
+
+    /// Submitted changelists, newest first.
+    pub submitted: Vec<Changelist>,
+    pub history_sel: usize,
+
+    /// Whether Changelists or History last moved, and so which one the Files
+    /// and Diff panels are following.
+    pub change_source: Panel,
 
     pub files: Vec<FileEntry>,
     /// Which changelist `files` belongs to; `None` while a load is in flight.
@@ -95,7 +141,6 @@ pub struct App {
     pub error: Option<String>,
 
     worker: Worker,
-    /// Set while a file load has been asked for but not answered.
     pending_files: Option<ChangeId>,
     pending_diff: Option<ChangeId>,
 }
@@ -104,13 +149,17 @@ impl App {
     pub fn new(worker: Worker) -> Self {
         worker.send(Request::Refresh);
         App {
-            focus: Panel::Changelists,
+            focus: Panel::Files,
             modal: Modal::None,
             quit: false,
             busy: true,
             info: None,
-            changes: Vec::new(),
+            pending: Vec::new(),
+            tab: ChangeTab::Local,
             change_sel: 0,
+            submitted: Vec::new(),
+            history_sel: 0,
+            change_source: Panel::Changelists,
             files: Vec::new(),
             files_for: None,
             file_sel: 0,
@@ -126,29 +175,73 @@ impl App {
         }
     }
 
-    /// The diff of the file under the cursor, if it has been fetched.
-    pub fn selected_diff(&self) -> Option<&FileDiff> {
-        let file = self.selected_file()?;
-        self.diffs.iter().find(|d| d.depot_path == file.depot_path)
+    /// The client name the server knows us by, used to tell our changelists
+    /// from everyone else's.
+    fn my_client(&self) -> &str {
+        self.info
+            .as_ref()
+            .filter(|i| i.client_known)
+            .map(|i| i.client.as_str())
+            .unwrap_or_default()
     }
 
-    pub fn selected_change(&self) -> Option<&Changelist> {
-        self.changes.get(self.change_sel)
+    fn belongs_in(&self, cl: &Changelist, tab: ChangeTab) -> bool {
+        let mine = cl.client == self.my_client();
+        match tab {
+            ChangeTab::Local => mine && !cl.shelved,
+            ChangeTab::Shelved => mine && cl.shelved,
+            ChangeTab::Others => !mine,
+        }
+    }
+
+    /// Pending changelists shown by the current tab.
+    pub fn tab_changes(&self) -> Vec<&Changelist> {
+        self.pending
+            .iter()
+            .filter(|cl| self.belongs_in(cl, self.tab))
+            .collect()
+    }
+
+    /// How many changelists each tab holds, for the tab bar.
+    pub fn tab_count(&self, tab: ChangeTab) -> usize {
+        self.pending
+            .iter()
+            .filter(|cl| self.belongs_in(cl, tab))
+            .count()
+    }
+
+    /// The changelist the Files and Diff panels are following.
+    pub fn selected_change(&self) -> Option<Changelist> {
+        match self.change_source {
+            Panel::History => self.submitted.get(self.history_sel).cloned(),
+            _ => self.tab_changes().get(self.change_sel).map(|cl| (*cl).clone()),
+        }
     }
 
     pub fn selected_file(&self) -> Option<&FileEntry> {
         self.files.get(self.file_sel)
     }
 
+    /// The diff of the file under the cursor, if it has been fetched.
+    pub fn selected_diff(&self) -> Option<&FileDiff> {
+        let file = self.selected_file()?;
+        self.diffs.iter().find(|d| d.depot_path == file.depot_path)
+    }
+
     pub fn handle(&mut self, event: Event) {
         match event {
             Event::Input(TermEvent::Key(key)) => self.on_key(key),
             Event::Input(_) => {}
-            Event::Info(info) => self.info = Some(info),
-            Event::Changes(changes) => {
-                self.changes = changes;
-                self.change_sel = self.change_sel.min(self.changes.len().saturating_sub(1));
-                self.request_files();
+            Event::Info(info) => {
+                self.info = Some(info);
+                // Tab membership depends on knowing our own client name.
+                self.follow_selection();
+            }
+            Event::Changes { pending, submitted } => {
+                self.pending = pending;
+                self.submitted = submitted;
+                self.clamp_selections();
+                self.follow_selection();
             }
             Event::Files { change, files } => {
                 // A stale answer for a changelist we have moved off.
@@ -208,12 +301,12 @@ impl App {
             KeyCode::Char('r') => {
                 self.busy = true;
                 self.error = None;
-                self.diffs_for = None;
                 self.files_for = None;
+                self.diffs_for = None;
                 self.worker.send(Request::Refresh);
             }
             KeyCode::Enter => {
-                let patch = self.changelist_patch();
+                let patch = diff::to_unified(&self.diffs);
                 if patch.is_empty() {
                     self.error = Some("nothing to diff in this changelist".into());
                 } else {
@@ -221,10 +314,14 @@ impl App {
                 }
             }
 
-            KeyCode::Tab | KeyCode::Char(']') => self.focus = self.focus.step(1),
-            KeyCode::BackTab | KeyCode::Char('[') => self.focus = self.focus.step(-1),
-            KeyCode::Char(c @ '1'..='9') => {
-                if let Some(panel) = Panel::from_number(c as usize - '0' as usize) {
+            KeyCode::Tab => self.focus = self.focus.step(1),
+            KeyCode::BackTab => self.focus = self.focus.step(-1),
+            // Within a panel rather than between panels: only Changelists has
+            // tabs today, so elsewhere these do nothing.
+            KeyCode::Char(']') => self.switch_tab(1),
+            KeyCode::Char('[') => self.switch_tab(-1),
+            KeyCode::Char(c @ '0'..='9') => {
+                if let Some(panel) = Panel::from_number(c as u8 - b'0') {
                     self.focus = panel;
                 }
             }
@@ -240,14 +337,25 @@ impl App {
         }
     }
 
+    fn switch_tab(&mut self, by: isize) {
+        if self.focus != Panel::Changelists {
+            return;
+        }
+        self.tab = self.tab.step(by);
+        self.change_sel = 0;
+        self.change_source = Panel::Changelists;
+        self.follow_selection();
+    }
+
     fn move_by(&mut self, delta: isize) {
         if self.focus == Panel::Diff {
             self.diff_scroll = self.diff_scroll.saturating_add_signed(delta);
             return;
         }
         let (sel, len) = match self.focus {
-            Panel::Changelists => (self.change_sel, self.changes.len()),
             Panel::Files => (self.file_sel, self.files.len()),
+            Panel::Changelists => (self.change_sel, self.tab_changes().len()),
+            Panel::History => (self.history_sel, self.submitted.len()),
             Panel::Status | Panel::Diff => return,
         };
         if len == 0 {
@@ -264,8 +372,9 @@ impl App {
             return;
         }
         let len = match self.focus {
-            Panel::Changelists => self.changes.len(),
             Panel::Files => self.files.len(),
+            Panel::Changelists => self.tab_changes().len(),
+            Panel::History => self.submitted.len(),
             Panel::Status | Panel::Diff => return,
         };
         if len == 0 {
@@ -276,12 +385,6 @@ impl App {
 
     fn set_selection(&mut self, index: usize) {
         match self.focus {
-            Panel::Changelists => {
-                if self.change_sel != index {
-                    self.change_sel = index;
-                    self.request_files();
-                }
-            }
             Panel::Files => {
                 if self.file_sel != index {
                     self.file_sel = index;
@@ -289,22 +392,41 @@ impl App {
                     self.diff_scroll = 0;
                 }
             }
+            Panel::Changelists => {
+                if self.change_sel != index || self.change_source != Panel::Changelists {
+                    self.change_sel = index;
+                    self.change_source = Panel::Changelists;
+                    self.follow_selection();
+                }
+            }
+            Panel::History => {
+                if self.history_sel != index || self.change_source != Panel::History {
+                    self.history_sel = index;
+                    self.change_source = Panel::History;
+                    self.follow_selection();
+                }
+            }
             Panel::Status | Panel::Diff => {}
         }
     }
 
-    /// Ask the worker for the selected changelist's files, unless we already
-    /// have them.
-    fn request_files(&mut self) {
-        let Some((change, status, shelved)) = self
-            .selected_change()
-            .map(|cl| (cl.id, cl.status, cl.shelved))
-        else {
+    fn clamp_selections(&mut self) {
+        self.change_sel = self
+            .change_sel
+            .min(self.tab_changes().len().saturating_sub(1));
+        self.history_sel = self.history_sel.min(self.submitted.len().saturating_sub(1));
+    }
+
+    /// Point the Files panel at whichever changelist is now selected.
+    fn follow_selection(&mut self) {
+        let Some(cl) = self.selected_change() else {
             self.files.clear();
             self.files_for = None;
+            self.diffs.clear();
+            self.diffs_for = None;
             return;
         };
-        if self.files_for == Some(change) || self.pending_files == Some(change) {
+        if self.files_for == Some(cl.id) || self.pending_files == Some(cl.id) {
             return;
         }
 
@@ -314,46 +436,47 @@ impl App {
         self.diffs.clear();
         self.diffs_for = None;
         self.diff_scroll = 0;
-        self.pending_files = Some(change);
+        self.pending_files = Some(cl.id);
         self.busy = true;
         self.worker.send(Request::LoadFiles {
-            change,
-            status,
-            shelved,
+            change: cl.id,
+            status: cl.status,
+            shelved: cl.shelved,
         });
     }
 
     /// Ask for the whole changelist's diff once its file list is known.
     fn request_diff(&mut self) {
-        let Some((change, status, shelved)) = self
-            .selected_change()
-            .map(|cl| (cl.id, cl.status, cl.shelved))
-        else {
+        let Some(cl) = self.selected_change() else {
             return;
         };
-        if self.diffs_for == Some(change) || self.pending_diff == Some(change) {
+        if self.diffs_for == Some(cl.id) || self.pending_diff == Some(cl.id) {
             return;
         }
 
         self.diffs.clear();
         self.diffs_for = None;
         self.diff_scroll = 0;
-        self.pending_diff = Some(change);
+        self.pending_diff = Some(cl.id);
         self.busy = true;
         self.worker.send(Request::LoadDiff {
-            change,
-            status,
-            shelved,
+            change: cl.id,
+            status: cl.status,
+            shelved: cl.shelved,
             files: self.files.clone(),
         });
     }
 
-    /// The patch for the whole selected changelist, for the external viewer.
-    fn changelist_patch(&self) -> String {
-        diff::to_unified(&self.diffs)
-    }
-
     pub fn shutdown(&self) {
         self.worker.send(Request::Shutdown);
+    }
+}
+
+/// Marker shown beside a changelist in a list.
+pub fn change_marker(cl: &Changelist) -> char {
+    match cl.status {
+        ChangeStatus::Submitted => '✓',
+        _ if cl.shelved => '⌸',
+        _ => '▸',
     }
 }

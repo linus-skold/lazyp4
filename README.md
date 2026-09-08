@@ -11,12 +11,32 @@ each file's diff in the pane, and press `Enter` to open the whole changelist in
 cargo run -p lazyp4
 ```
 
+Panels run down the left, with the diff filling the right:
+
+| Key | Panel | Shows |
+| --- | --- | --- |
+| `1` | Status | user, client, stream, server |
+| `2` | Files | files of the selected changelist |
+| `3` | Changelists | pending changelists, in three tabs |
+| `4` | History | submitted changelists |
+| `0` | Diff | the selected file's diff |
+
+`3` holds the pending work, split by where its content lives:
+
+| Tab | Contents |
+| --- | --- |
+| Local | pending on this workspace, nothing shelved |
+| Shelved | pending on this workspace, content shelved on the server |
+| Others | pending on somebody else's workspace |
+
+Selecting a changelist — in either `3` or `4` — repoints Files and Diff at it.
+
 | Key | Action |
 | --- | --- |
-| `j` `k`, `↓` `↑` | move |
+| `j` `k`, `↓` `↑` | move, or scroll the diff |
 | `g` `G` | first, last |
-| `Tab`, `[` `]` | cycle panel |
-| `1` `2` `3` `4` | focus a panel — the number is shown in its title |
+| `Tab`, `Shift-Tab` | cycle panels |
+| `[` `]` | switch tab within a panel |
 | `Enter` | open the changelist's patch in `hunk` |
 | `r` | refresh |
 | `x` | command log — every P4API call made |

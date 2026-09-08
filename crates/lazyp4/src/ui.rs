@@ -6,9 +6,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use p4::{ChangeStatus, FileAction};
+use p4::{Changelist, FileAction};
 
-use crate::app::{App, Modal, Panel};
+use crate::app::{change_marker, App, ChangeTab, Modal, Panel};
 
 const FOCUS: Color = Color::Yellow;
 const IDLE: Color = Color::DarkGray;
@@ -18,16 +18,19 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(42), Constraint::Min(0)]).areas(body);
-    let [changes, files, status] = Layout::vertical([
-        Constraint::Percentage(55),
-        Constraint::Min(5),
-        Constraint::Length(7),
+    // Status is fixed; the three lists share what is left.
+    let [status, files, changes, history] = Layout::vertical([
+        Constraint::Length(6),
+        Constraint::Fill(1),
+        Constraint::Fill(1),
+        Constraint::Fill(1),
     ])
     .areas(left);
 
-    draw_changes(frame, app, changes);
-    draw_files(frame, app, files);
     draw_status(frame, app, status);
+    draw_files(frame, app, files);
+    draw_changes(frame, app, changes);
+    draw_history(frame, app, history);
     draw_diff(frame, app, right);
     draw_status_bar(frame, app, status_bar);
 
@@ -66,40 +69,90 @@ fn panel_block(app: &App, panel: Panel, extra: Option<String>) -> Block<'static>
         ]))
 }
 
-fn draw_changes(frame: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app
-        .changes
-        .iter()
-        .map(|cl| {
-            let marker = match cl.status {
-                ChangeStatus::Submitted => Span::styled("✓", Style::default().fg(Color::Green)),
-                _ if cl.shelved => Span::styled("⌸", Style::default().fg(Color::Magenta)),
-                _ => Span::styled("▸", Style::default().fg(Color::Blue)),
-            };
-            ListItem::new(Line::from(vec![
-                marker,
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:>7}", cl.id.to_string()),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:<10.10}", cl.user),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::raw(" "),
-                Span::raw(cl.summary().to_owned()),
-            ]))
-        })
-        .collect();
+fn change_item(cl: &Changelist) -> ListItem<'static> {
+    let marker = change_marker(cl);
+    ListItem::new(Line::from(vec![
+        Span::styled(
+            marker.to_string(),
+            Style::default().fg(match marker {
+                '✓' => Color::Green,
+                '⌸' => Color::Magenta,
+                _ => Color::Blue,
+            }),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>7}", cl.id.to_string()),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:<10.10}", cl.user),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" "),
+        Span::raw(cl.summary().to_owned()),
+    ]))
+}
 
-    let count = format!("({})", app.changes.len());
+fn draw_changes(frame: &mut Frame, app: &App, area: Rect) {
+    let block = panel_block(app, Panel::Changelists, None);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // One row of tabs, then the list below it.
+    let [tabs, list] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+    frame.render_widget(Paragraph::new(tab_bar(app)), tabs);
+
+    let changes = app.tab_changes();
+    if changes.is_empty() {
+        frame.render_widget(
+            Paragraph::new("  nothing here").style(Style::default().fg(IDLE)),
+            list,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem> = changes.iter().map(|cl| change_item(cl)).collect();
     let mut state = ListState::default().with_selected(Some(app.change_sel));
     frame.render_stateful_widget(
+        List::new(items).highlight_style(selection_style(app.focus == Panel::Changelists)),
+        list,
+        &mut state,
+    );
+}
+
+/// `Local 2 │ Shelved 2 │ Others 1`, with the open tab highlighted.
+fn tab_bar(app: &App) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (i, tab) in ChangeTab::ORDER.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" │ ", Style::default().fg(IDLE)));
+        } else {
+            spans.push(Span::raw(" "));
+        }
+        let open = *tab == app.tab;
+        spans.push(Span::styled(
+            format!("{} {}", tab.title(), app.tab_count(*tab)),
+            if open {
+                Style::default().fg(FOCUS).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(IDLE)
+            },
+        ));
+    }
+    Line::from(spans)
+}
+
+fn draw_history(frame: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = app.submitted.iter().map(change_item).collect();
+    let count = format!("({})", app.submitted.len());
+    let mut state = ListState::default().with_selected(Some(app.history_sel));
+    frame.render_stateful_widget(
         List::new(items)
-            .block(panel_block(app, Panel::Changelists, Some(count)))
-            .highlight_style(selection_style(app.focus == Panel::Changelists)),
+            .block(panel_block(app, Panel::History, Some(count)))
+            .highlight_style(selection_style(app.focus == Panel::History)),
         area,
         &mut state,
     );
@@ -286,7 +339,9 @@ fn draw_help(frame: &mut Frame) {
     let mut lines = vec![
         row("j / k, ↓ / ↑".into(), "move".into()),
         row("g / G".into(), "first / last".into()),
-        row("Tab, [ ]".into(), "cycle panel".into()),
+        row("Tab / Shift-Tab".into(), "cycle panels".into()),
+        row("[ ]".into(), "switch tab within a panel".into()),
+        row("Enter".into(), "open the patch in hunk".into()),
         Line::raw(""),
     ];
     lines.extend(
