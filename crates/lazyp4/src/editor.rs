@@ -64,12 +64,12 @@ impl Editor {
             // mid-edit would throw the text away without saying so.
             KeyCode::Char('c') if ctrl => return Outcome::Cancel,
 
-            // A bare Enter saves, so a newline needs a modifier. Ctrl-J is the
-            // dependable one: Alt-Enter is Windows Terminal's fullscreen
-            // toggle, and Shift-Enter is not reported by every terminal.
-            KeyCode::Char('j') if ctrl => self.split_line(),
+            // A bare Enter saves; Shift-Enter and friends add a newline.
+            // Ctrl-J stays as a fallback for terminals that report a modified
+            // Enter as a plain one.
             KeyCode::Enter if key.modifiers.is_empty() => return Outcome::Save,
             KeyCode::Enter => self.split_line(),
+            KeyCode::Char('j') if ctrl => self.split_line(),
 
             KeyCode::Char(c) => self.insert(c),
             KeyCode::Backspace => self.backspace(),

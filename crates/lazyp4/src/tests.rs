@@ -151,9 +151,13 @@ fn render(app: &App, width: u16, height: u16) -> String {
 }
 
 fn press(app: &mut App, code: KeyCode) {
+    chord(app, code, KeyModifiers::NONE);
+}
+
+fn chord(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
         code,
-        KeyModifiers::NONE,
+        modifiers,
         KeyEventKind::Press,
     ))));
 }
@@ -567,40 +571,33 @@ fn enter_saves_the_description() {
 }
 
 #[test]
-fn ctrl_j_writes_a_newline_since_enter_now_saves() {
+fn shift_enter_writes_a_newline_since_enter_now_saves() {
     let mut app = app();
     app.focus = Panel::Changelists;
     press(&mut app, KeyCode::Char('e'));
     app.last_request();
 
-    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
-        KeyCode::Char('j'),
-        KeyModifiers::CONTROL,
-        KeyEventKind::Press,
-    ))));
+    chord(&mut app, KeyCode::Enter, KeyModifiers::SHIFT);
     press(&mut app, KeyCode::Char('x'));
 
     let editor = app.editor.as_ref().expect("still editing, not saved");
     assert_eq!(editor.text(), "# Do not submit\nx");
-    assert!(app.last_request().is_none(), "Ctrl-J must not save");
+    assert!(app.last_request().is_none(), "Shift-Enter must not save");
 }
 
 #[test]
-fn a_modified_enter_writes_a_newline_too() {
-    // Terminals that report Ctrl-Enter or Shift-Enter should not save either.
+fn ctrl_j_still_writes_a_newline() {
+    // Fallback for terminals that report a modified Enter as a plain one.
     let mut app = app();
     app.focus = Panel::Changelists;
     press(&mut app, KeyCode::Char('e'));
     app.last_request();
 
-    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
-        KeyCode::Enter,
-        KeyModifiers::CONTROL,
-        KeyEventKind::Press,
-    ))));
+    chord(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
 
     assert!(app.editor.is_some());
     assert_eq!(app.editor.as_ref().unwrap().text(), "# Do not submit\n");
+    assert!(app.last_request().is_none());
 }
 
 #[test]

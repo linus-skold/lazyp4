@@ -58,9 +58,9 @@ tens of seconds on a large tree, so it only runs when you ask.
 
 ## Editing a description
 
-`e` on a changelist opens its description in a popup. `Enter` saves and `Esc`
-discards, so `Ctrl-J` is what adds a newline — `Alt-Enter` would collide with
-Windows Terminal's fullscreen toggle.
+`e` on a changelist opens its description in a popup. `Enter` saves, `Esc`
+discards, and `Shift-Enter` adds a newline. `Ctrl-J` also adds one, for
+terminals that report a modified `Enter` as a plain one.
 
 Only the `Description` field of the spec is rewritten, so everything else about
 the changelist is left exactly as the server sent it.

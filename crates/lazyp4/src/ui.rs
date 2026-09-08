@@ -62,7 +62,7 @@ fn draw_editor(frame: &mut Frame, editor: &Editor) {
             Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
-            " Enter save   Ctrl-J newline   Esc cancel ",
+            " Enter save   Shift-Enter newline   Esc cancel ",
             Style::default().fg(IDLE),
         ));
     let inner = block.inner(area);
