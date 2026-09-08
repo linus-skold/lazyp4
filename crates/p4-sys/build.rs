@@ -1,6 +1,10 @@
 use std::env;
 use std::path::PathBuf;
 
+const WHERE: &str = "\
+Set it in the [env] table of .cargo/config.toml, which applies to every shell
+and IDE, or export it to override what that file says.";
+
 const HELP: &str = "\
 set P4API_DIR to an unpacked Helix Core C++ API distribution.
 
@@ -24,7 +28,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/shim.cc");
     println!("cargo:rerun-if-changed=include/shim.h");
 
-    let root = PathBuf::from(env::var("P4API_DIR").unwrap_or_else(|_| panic!("{HELP}")));
+    let root = PathBuf::from(env::var("P4API_DIR").unwrap_or_else(|_| panic!("{HELP}\n\n{WHERE}")));
     let include = root.join("include").join("p4");
     let lib = root.join("lib");
     if !include.join("clientapi.h").is_file() {
@@ -74,7 +78,8 @@ fn main() {
         println!("cargo:rustc-link-lib=static={name}");
     }
 
-    let ssl_dir = PathBuf::from(env::var("OPENSSL_LIB_DIR").unwrap_or_else(|_| panic!("{SSL_HELP}")));
+    let ssl_dir =
+        PathBuf::from(env::var("OPENSSL_LIB_DIR").unwrap_or_else(|_| panic!("{SSL_HELP}\n\n{WHERE}")));
     if !ssl_dir.is_dir() {
         panic!("{} is not a directory\n\n{SSL_HELP}", ssl_dir.display());
     }

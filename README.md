@@ -42,27 +42,33 @@ Download a distribution from <https://ftp.perforce.com/perforce/> under
 
 On Windows choose a `static` build — "static" here means the static CRT (`/MT`),
 which the P4API is compiled with — and an `openssl3` suffix, for example
-`p4api_vs2022_static_openssl3.zip`.
-
-```powershell
-$env:P4API_DIR = "C:\path\to\p4api-2025.1.xxxxxxx-vs2022_static"
-```
-
-The directory must contain `include/p4/clientapi.h` and `lib/`.
+`p4api_vs2022_static_openssl3.zip`. The directory must contain
+`include/p4/clientapi.h` and `lib/`.
 
 ### 3. OpenSSL 3
 
-The P4API archive references OpenSSL but does not ship it. Point at a static
-OpenSSL 3 build that matches the P4API's CRT mode — on Windows, the `/MT` one:
+The P4API archive references OpenSSL but does not ship it, so `librpc` leaves
+the `EVP_*` and `OPENSSL_*` symbols unresolved on its own. Supply a static
+OpenSSL 3 build in the same CRT mode as the P4API — on Windows, `/MT`.
 
-```powershell
-$env:OPENSSL_LIB_DIR = "C:\Users\you\scoop\apps\openssl\current\lib\VC\x64\MT"
+`scoop install openssl` puts one in `lib`, alongside the import libraries;
+`vcpkg install openssl:x64-windows-static` works too.
+
+### 4. Point the build at both
+
+`.cargo/config.toml` carries the two paths:
+
+```toml
+[env]
+P4API_DIR = "C:\\path\\to\\p4api-2025.1.xxxxxxx-vs2022_static"
+OPENSSL_LIB_DIR = "C:\\Users\\you\\scoop\\apps\\openssl\\current\\lib"
 ```
 
-`scoop install openssl` provides this layout. So does
-`vcpkg install openssl:x64-windows-static`.
+Edit them to suit your machine. They are defaults rather than overrides: cargo
+skips an entry that is already in the environment, so exporting `P4API_DIR` or
+`OPENSSL_LIB_DIR` takes precedence without touching the file.
 
-### 4. Build
+### 5. Build
 
 ```powershell
 cargo build

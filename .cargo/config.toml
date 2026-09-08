@@ -2,3 +2,12 @@
 # object in the final binary must agree. Rust defaults to /MD on MSVC.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# Where p4-sys/build.rs looks for the two libraries this project cannot vendor.
+#
+# These are defaults, not overrides: cargo only applies an entry here when the
+# variable is absent from the environment, so exporting either one wins. Set
+# them to suit your machine — see the Build section of README.md.
+[env]
+P4API_DIR = "C:\\Users\\Linus\\Development\\p4api\\p4api-2025.1.3042095-vs2022_static"
+OPENSSL_LIB_DIR = "C:\\Users\\Linus\\scoop\\apps\\openssl\\current\\lib"
