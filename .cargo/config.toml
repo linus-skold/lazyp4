@@ -1,0 +1,4 @@
+# The P4API static distribution is built against the static CRT (/MT), so every
+# object in the final binary must agree. Rust defaults to /MD on MSVC.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

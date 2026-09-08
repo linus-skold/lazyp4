@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/p4-sys"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/linussko/lazyp4"
+
+[workspace.dependencies]
+cxx = "1.0"
+cxx-build = "1.0"
