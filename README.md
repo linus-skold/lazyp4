@@ -25,9 +25,14 @@ Panels run down the left, with the diff filling the right:
 
 | Tab | Contents |
 | --- | --- |
-| Local | pending on this workspace, nothing shelved |
-| Shelved | pending on this workspace, content shelved on the server |
-| Others | pending on somebody else's workspace |
+| Local | yours, with nothing shelved |
+| Shelved | yours, with content shelved on the server |
+| Others | somebody else's |
+
+A changelist is yours when your user owns it, not when it is open on this
+workspace — you may have several. One open elsewhere is tagged with its client
+name. `Local` also carries the **default** changelist, which `p4 changes` never
+reports, so anything checked out without a numbered changelist still appears.
 
 Selecting a changelist — in either `3` or `4` — repoints Files and Diff at it.
 

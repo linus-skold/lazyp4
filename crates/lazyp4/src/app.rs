@@ -175,9 +175,16 @@ impl App {
         }
     }
 
-    /// The client name the server knows us by, used to tell our changelists
-    /// from everyone else's.
-    fn my_client(&self) -> &str {
+    /// Our own user name.
+    fn my_user(&self) -> &str {
+        self.info.as_ref().map(|i| i.user.as_str()).unwrap_or_default()
+    }
+
+    /// Our workspace, when the server could resolve one.
+    ///
+    /// Empty when P4CLIENT does not name a real client — which happens simply
+    /// by running lazyp4 outside a workspace.
+    pub fn my_client(&self) -> &str {
         self.info
             .as_ref()
             .filter(|i| i.client_known)
@@ -185,8 +192,17 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// A changelist is ours if our user owns it.
+    ///
+    /// Deliberately not keyed on the client: a user commonly has several
+    /// workspaces, and lazyp4 started outside one has no client name at all,
+    /// which would otherwise put every changelist under Others.
+    fn is_mine(&self, cl: &Changelist) -> bool {
+        !self.my_user().is_empty() && cl.user == self.my_user()
+    }
+
     fn belongs_in(&self, cl: &Changelist, tab: ChangeTab) -> bool {
-        let mine = cl.client == self.my_client();
+        let mine = self.is_mine(cl);
         match tab {
             ChangeTab::Local => mine && !cl.shelved,
             ChangeTab::Shelved => mine && cl.shelved,

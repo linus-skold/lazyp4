@@ -158,23 +158,38 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
             Request::Shutdown => return,
             Request::Refresh => {
                 let _ = events.send(Event::Log("info".into()));
-                match p4.info() {
+                let info = match p4.info() {
                     Ok(info) => {
-                        let _ = events.send(Event::Info(info));
+                        let _ = events.send(Event::Info(info.clone()));
+                        Some(info)
                     }
                     Err(e) => {
                         let _ = events.send(Event::Error(format!("info: {e}")));
+                        None
                     }
-                }
+                };
 
                 let _ = events.send(Event::Log("changes -l -s pending".into()));
-                let pending = match p4.changes(&ChangeFilter::pending()) {
+                let mut pending = match p4.changes(&ChangeFilter::pending()) {
                     Ok(v) => v,
                     Err(e) => {
                         let _ = events.send(Event::Error(format!("changes: {e}")));
                         Vec::new()
                     }
                 };
+
+                // `p4 changes` never reports the default changelist, so it has
+                // to be built from the files opened in it.
+                if let Some(info) = &info {
+                    let _ = events.send(Event::Log("opened -c default".into()));
+                    match p4.opened(Some(ChangeId::Default)) {
+                        Ok(files) if !files.is_empty() => pending.insert(0, default_change(info)),
+                        Ok(_) => {}
+                        Err(e) => {
+                            let _ = events.send(Event::Error(format!("opened: {e}")));
+                        }
+                    }
+                }
 
                 let _ = events.send(Event::Log("changes -l -s submitted -m 50".into()));
                 let submitted = match p4.changes(&ChangeFilter::submitted(50)) {
@@ -210,6 +225,19 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
         }
 
         let _ = events.send(Event::Idle);
+    }
+}
+
+/// A stand-in for the default changelist, which the server never lists.
+fn default_change(info: &ServerInfo) -> Changelist {
+    Changelist {
+        id: ChangeId::Default,
+        status: ChangeStatus::Pending,
+        user: info.user.clone(),
+        client: info.client.clone(),
+        time: None,
+        description: "files not in a numbered changelist".into(),
+        shelved: false,
     }
 }
 
@@ -374,20 +402,27 @@ fn load_files(
     }
 
     let _ = events.send(Event::Log(format!("opened -c {change}")));
-    match p4.opened(Some(change)) {
-        Ok(v) if !v.is_empty() => v
-            .into_iter()
-            .map(|f| FileEntry {
-                depot_path: f.depot_path,
-                rev: f.rev,
-                action: f.action,
-                unresolved: f.unresolved,
-            })
-            .collect(),
-        Ok(_) => describe(p4, false),
+    let opened = match p4.opened(Some(change)) {
+        Ok(v) => v,
         Err(e) => {
             let _ = events.send(Event::Error(format!("opened: {e}")));
-            describe(p4, false)
+            Vec::new()
         }
+    };
+
+    // The default changelist exists only as its open files; `describe` cannot
+    // be asked about it.
+    if opened.is_empty() && change != ChangeId::Default {
+        return describe(p4, false);
     }
+
+    opened
+        .into_iter()
+        .map(|f| FileEntry {
+            depot_path: f.depot_path,
+            rev: f.rev,
+            action: f.action,
+            unresolved: f.unresolved,
+        })
+        .collect()
 }

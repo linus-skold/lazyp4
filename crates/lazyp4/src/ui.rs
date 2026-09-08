@@ -69,9 +69,9 @@ fn panel_block(app: &App, panel: Panel, extra: Option<String>) -> Block<'static>
         ]))
 }
 
-fn change_item(cl: &Changelist) -> ListItem<'static> {
+fn change_item(cl: &Changelist, my_client: &str) -> ListItem<'static> {
     let marker = change_marker(cl);
-    ListItem::new(Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             marker.to_string(),
             Style::default().fg(match marker {
@@ -92,7 +92,17 @@ fn change_item(cl: &Changelist) -> ListItem<'static> {
         ),
         Span::raw(" "),
         Span::raw(cl.summary().to_owned()),
-    ]))
+    ];
+
+    // Ownership is by user, so one of our own changelists can be sitting on a
+    // different workspace. Say so, rather than implying it is checked out here.
+    if !my_client.is_empty() && !cl.client.is_empty() && cl.client != my_client {
+        spans.push(Span::styled(
+            format!(" @{}", cl.client),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    ListItem::new(Line::from(spans))
 }
 
 fn draw_changes(frame: &mut Frame, app: &App, area: Rect) {
@@ -114,7 +124,10 @@ fn draw_changes(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let items: Vec<ListItem> = changes.iter().map(|cl| change_item(cl)).collect();
+    let items: Vec<ListItem> = changes
+        .iter()
+        .map(|cl| change_item(cl, app.my_client()))
+        .collect();
     let mut state = ListState::default().with_selected(Some(app.change_sel));
     frame.render_stateful_widget(
         List::new(items).highlight_style(selection_style(app.focus == Panel::Changelists)),
@@ -146,7 +159,11 @@ fn tab_bar(app: &App) -> Line<'static> {
 }
 
 fn draw_history(frame: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app.submitted.iter().map(change_item).collect();
+    let items: Vec<ListItem> = app
+        .submitted
+        .iter()
+        .map(|cl| change_item(cl, app.my_client()))
+        .collect();
     let count = format!("({})", app.submitted.len());
     let mut state = ListState::default().with_selected(Some(app.history_sel));
     frame.render_stateful_widget(
@@ -219,18 +236,25 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         ))),
         Some(info) => {
             lines.push(field("user", &info.user));
-            lines.push(if info.client_known {
-                field("client", &info.client)
+            if info.client_known {
+                lines.push(field("client", &info.client));
+                if let Some(stream) = &info.stream {
+                    lines.push(field("stream", stream));
+                }
+                lines.push(field("server", &info.server_address));
             } else {
-                Line::from(vec![
+                // Without a client there are no open files and no workspace
+                // diffs, so this needs to explain itself rather than sit there.
+                lines.push(Line::from(vec![
                     Span::styled("client  ", Style::default().fg(IDLE)),
                     Span::styled("not set", Style::default().fg(Color::Red)),
-                ])
-            });
-            if let Some(stream) = &info.stream {
-                lines.push(field("stream", stream));
+                ]));
+                lines.push(Line::from(Span::styled(
+                    "start lazyp4 in a workspace, or set P4CLIENT",
+                    Style::default().fg(Color::Red),
+                )));
+                lines.push(field("server", &info.server_address));
             }
-            lines.push(field("server", &info.server_address));
         }
     }
 
