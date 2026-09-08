@@ -221,6 +221,66 @@ impl Client {
         }
     }
 
+    /// Workspace files that differ from the depot without being open.
+    ///
+    /// This walks the whole workspace and is slow — tens of seconds on a large
+    /// tree — so call it only when the user asks for it.
+    pub fn status(&mut self) -> Result<Vec<StatusEntry>> {
+        let out = self.run_raw("status", &[], "")?;
+        Ok(out
+            .records
+            .iter()
+            .filter_map(|rec| {
+                Some(StatusEntry {
+                    depot_path: rec.field("depotFile")?.to_owned(),
+                    local_path: rec.field("clientFile")?.to_owned(),
+                    action: rec.field("action").unwrap_or("add").parse().unwrap(),
+                })
+            })
+            .collect())
+    }
+
+    /// Move already-open files into another changelist.
+    ///
+    /// `ChangeId::Default` moves them back out of a numbered changelist.
+    pub fn reopen(&mut self, change: ChangeId, paths: &[&str]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let id = change.to_string();
+        let mut args = vec!["-c", &id];
+        args.extend_from_slice(paths);
+        self.run("reopen", &args)?;
+        Ok(())
+    }
+
+    /// Open files for `add`, `edit` or `delete` directly into a changelist.
+    ///
+    /// This is what brings a file `p4 status` found under Perforce's control.
+    pub fn open_files(
+        &mut self,
+        action: &FileAction,
+        change: ChangeId,
+        paths: &[&str],
+    ) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let cmd = match action {
+            FileAction::Add => "add",
+            FileAction::Edit => "edit",
+            FileAction::Delete => "delete",
+            other => {
+                return Err(Error::parse(format!("cannot open a file for {other}")));
+            }
+        };
+        let id = change.to_string();
+        let mut args = vec!["-c", &id];
+        args.extend_from_slice(paths);
+        self.run(cmd, &args)?;
+        Ok(())
+    }
+
     /// Local filesystem path of a depot file, or `None` when it is not mapped
     /// into the workspace. Needs a tagged connection.
     pub fn local_path(&mut self, depot_path: &str) -> Result<Option<String>> {

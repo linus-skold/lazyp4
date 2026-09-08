@@ -8,7 +8,8 @@ use ratatui::Frame;
 
 use p4::{Changelist, FileAction};
 
-use crate::app::{change_marker, App, ChangeTab, Modal, Panel};
+use crate::app::{change_marker, App, ChangeTab, FileRow, Modal, Panel};
+use crate::worker::FileEntry;
 
 const FOCUS: Color = Color::Yellow;
 const IDLE: Color = Color::DarkGray;
@@ -182,42 +183,46 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         app.selected_change().map(|cl| format!("of {}", cl.id)),
     );
 
-    if app.files.is_empty() {
+    let rows = app.file_rows();
+    if rows.is_empty() {
         let msg = if app.files_for.is_none() {
-            "loading…"
+            "loading…".to_owned()
+        } else if app.scanning {
+            "scanning the workspace…".to_owned()
+        } else if app.scanned.is_empty() {
+            "no open files — press u to scan for untracked ones".to_owned()
         } else {
-            "no files visible from this workspace"
+            "no files visible from this workspace".to_owned()
         };
         frame.render_widget(
-            Paragraph::new(msg).style(Style::default().fg(IDLE)).block(block),
+            Paragraph::new(msg)
+                .style(Style::default().fg(IDLE))
+                .block(block),
             area,
         );
         return;
     }
 
-    let items: Vec<ListItem> = app
-        .files
+    // The selection indexes files; the list also holds group headers.
+    let mut selected_row = None;
+    let items: Vec<ListItem> = rows
         .iter()
-        .map(|f| {
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    f.action.code().to_string(),
-                    Style::default()
-                        .fg(action_color(&f.action))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::raw(f.depot_path.clone()),
-                if f.unresolved {
-                    Span::styled(" (unresolved)", Style::default().fg(Color::Red))
-                } else {
-                    Span::raw("")
-                },
-            ]))
+        .enumerate()
+        .map(|(row, entry)| match entry {
+            FileRow::Header(text) => ListItem::new(Line::from(Span::styled(
+                format!(" {text}"),
+                Style::default().fg(IDLE).add_modifier(Modifier::BOLD),
+            ))),
+            FileRow::File(i, f) => {
+                if *i == app.file_sel {
+                    selected_row = Some(row);
+                }
+                file_item(f)
+            }
         })
         .collect();
 
-    let mut state = ListState::default().with_selected(Some(app.file_sel));
+    let mut state = ListState::default().with_selected(selected_row);
     frame.render_stateful_widget(
         List::new(items)
             .block(block)
@@ -225,6 +230,37 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         area,
         &mut state,
     );
+}
+
+fn file_item(f: &FileEntry) -> ListItem<'static> {
+    // `??` for a file Perforce has never seen, mirroring git's untracked mark.
+    let (code, color) = if f.untracked() {
+        ("??".to_owned(), Color::Magenta)
+    } else {
+        (f.action.code().to_string(), action_color(&f.action))
+    };
+
+    ListItem::new(Line::from(vec![
+        Span::styled(
+            format!("{code:<2}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            f.depot_path.clone(),
+            // A file that is not open is not part of any changelist yet.
+            if f.opened {
+                Style::default()
+            } else {
+                Style::default().fg(Color::Gray)
+            },
+        ),
+        if f.unresolved {
+            Span::styled(" (unresolved)", Style::default().fg(Color::Red))
+        } else {
+            Span::raw("")
+        },
+    ]))
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
@@ -366,6 +402,8 @@ fn draw_help(frame: &mut Frame) {
         row("Tab / Shift-Tab".into(), "cycle panels".into()),
         row("[ ]".into(), "switch tab within a panel".into()),
         row("Enter".into(), "open the patch in hunk".into()),
+        row("Space".into(), "move a file in or out of the changelist".into()),
+        row("u".into(), "scan for untracked files (slow)".into()),
         Line::raw(""),
     ];
     lines.extend(

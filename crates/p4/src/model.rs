@@ -164,6 +164,19 @@ pub struct OpenedFile {
     pub unresolved: bool,
 }
 
+/// A workspace file that differs from the depot but is not open, as reported
+/// by `p4 status`.
+///
+/// The action says what it would take to reconcile it: `Add` for a file
+/// Perforce does not know about, `Edit` for one changed without being checked
+/// out, `Delete` for one removed from disk.
+#[derive(Debug, Clone)]
+pub struct StatusEntry {
+    pub depot_path: String,
+    pub local_path: String,
+    pub action: FileAction,
+}
+
 /// One file inside a changelist, as reported by `p4 describe`.
 #[derive(Debug, Clone)]
 pub struct DescribedFile {

@@ -36,12 +36,34 @@ reports, so anything checked out without a numbered changelist still appears.
 
 Selecting a changelist — in either `3` or `4` — repoints Files and Diff at it.
 
+## Moving files between changelists
+
+With a numbered changelist selected, Files shows two groups: what is in that
+changelist, and the default changelist below it. `Space` moves the file under
+the cursor across the divider — into the changelist, or back out to default.
+
+`u` scans the workspace for files that differ from the depot without being
+open, and adds them to the lower group. It walks the whole workspace and takes
+tens of seconds on a large tree, so it only runs when you ask.
+
+| Mark | Meaning |
+| --- | --- |
+| `A` | open for add |
+| `M` | open for edit, or changed on disk without being open |
+| `D` | open for delete, or missing from disk |
+| `??` | Perforce has never seen this file |
+
+`Space` on a file that is not open yet opens it first — `add`, `edit` or
+`delete`, whichever reconciles it — and puts it straight into the changelist.
+
 | Key | Action |
 | --- | --- |
 | `j` `k`, `↓` `↑` | move, or scroll the diff |
 | `g` `G` | first, last |
 | `Tab`, `Shift-Tab` | cycle panels |
 | `[` `]` | switch tab within a panel |
+| `Space` | move a file in or out of the changelist |
+| `u` | scan for files that are changed but not open (slow) |
 | `Enter` | open the changelist's patch in `hunk` |
 | `r` | refresh |
 | `x` | command log — every P4API call made |

@@ -17,9 +17,42 @@ use p4::{
 #[derive(Debug, Clone)]
 pub struct FileEntry {
     pub depot_path: String,
+    /// Where the file sits on disk. Only known for files found by scanning,
+    /// which is also the only case that needs it.
+    pub local_path: Option<String>,
     pub rev: Option<u32>,
     pub action: FileAction,
     pub unresolved: bool,
+    /// False for a file the workspace scan found but Perforce has not opened.
+    /// Those need `add`/`edit`/`delete` rather than `reopen`.
+    pub opened: bool,
+}
+
+impl FileEntry {
+    fn opened(f: p4::OpenedFile) -> Self {
+        FileEntry {
+            depot_path: f.depot_path,
+            local_path: None,
+            rev: f.rev,
+            action: f.action,
+            unresolved: f.unresolved,
+            opened: true,
+        }
+    }
+
+    /// Perforce does not track this file at all, so it shows as `??`.
+    pub fn untracked(&self) -> bool {
+        !self.opened && self.action == FileAction::Add
+    }
+
+    /// The path to name on a command line. A file Perforce has never seen has
+    /// no usable depot path.
+    pub fn command_path(&self) -> &str {
+        match (&self.local_path, self.opened) {
+            (Some(local), false) => local,
+            _ => &self.depot_path,
+        }
+    }
 }
 
 pub enum Request {
@@ -29,6 +62,15 @@ pub enum Request {
         change: ChangeId,
         status: ChangeStatus,
         shelved: bool,
+    },
+    /// Walk the workspace for files that differ but are not open. Slow, so it
+    /// only runs when the user asks.
+    ScanWorkspace,
+    /// Move files into `change`, opening them first if Perforce has not seen
+    /// them. `ChangeId::Default` moves them out of a numbered changelist.
+    MoveFiles {
+        change: ChangeId,
+        files: Vec<FileEntry>,
     },
     /// Diff a whole changelist at once. One command covers every file, and the
     /// pane picks out the one under the cursor.
@@ -52,8 +94,17 @@ pub enum Event {
     },
     Files {
         change: ChangeId,
+        /// Files open in `change`.
         files: Vec<FileEntry>,
+        /// Files open in the default changelist, shown beneath them so a file
+        /// can be moved across. Empty when `change` is itself the default, or
+        /// is not a pending changelist of ours.
+        default_files: Vec<FileEntry>,
     },
+    /// Files the workspace scan turned up.
+    Scanned(Vec<FileEntry>),
+    /// A write finished; whatever is on screen is now stale.
+    Changed,
     Diff {
         change: ChangeId,
         files: Vec<FileDiff>,
@@ -67,6 +118,9 @@ pub enum Event {
 
 pub struct Worker {
     requests: Sender<Request>,
+    /// Kept by [`Worker::detached`] so tests can see what the app asked for.
+    #[cfg(test)]
+    outbox: Option<Receiver<Request>>,
 }
 
 impl Worker {
@@ -79,7 +133,14 @@ impl Worker {
         thread::spawn(move || run(req_rx, events));
         spawn_input_reader(ev_tx);
 
-        (Worker { requests: req_tx }, ev_rx)
+        (
+            Worker {
+                requests: req_tx,
+                #[cfg(test)]
+                outbox: None,
+            },
+            ev_rx,
+        )
     }
 
     /// A worker with nothing behind it. Requests are dropped, so an [`App`]
@@ -88,8 +149,23 @@ impl Worker {
     /// [`App`]: crate::app::App
     #[cfg(test)]
     pub fn detached() -> Worker {
-        let (tx, _) = mpsc::channel();
-        Worker { requests: tx }
+        let (tx, rx) = mpsc::channel();
+        Worker {
+            requests: tx,
+            outbox: Some(rx),
+        }
+    }
+
+    /// The most recent request, discarding any before it. `None` when nothing
+    /// has been sent since the last call.
+    #[cfg(test)]
+    pub fn last_request(&self) -> Option<Request> {
+        let rx = self.outbox.as_ref()?;
+        let mut last = None;
+        while let Ok(req) = rx.try_recv() {
+            last = Some(req);
+        }
+        last
     }
 
     pub fn send(&self, req: Request) {
@@ -208,7 +284,53 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 shelved,
             } => {
                 let files = load_files(p4, &events, change, status, shelved);
-                let _ = events.send(Event::Files { change, files });
+
+                // Only a numbered pending changelist of ours has somewhere to
+                // move files to and from.
+                let default_files = if change == ChangeId::Default
+                    || status == ChangeStatus::Submitted
+                {
+                    Vec::new()
+                } else {
+                    let _ = events.send(Event::Log("opened -c default".into()));
+                    p4.opened(Some(ChangeId::Default))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(FileEntry::opened)
+                        .collect()
+                };
+
+                let _ = events.send(Event::Files {
+                    change,
+                    files,
+                    default_files,
+                });
+            }
+            Request::ScanWorkspace => {
+                let _ = events.send(Event::Log("status".into()));
+                match p4.status() {
+                    Ok(entries) => {
+                        let files = entries
+                            .into_iter()
+                            .map(|e| FileEntry {
+                                depot_path: e.depot_path,
+                                local_path: Some(e.local_path),
+                                rev: None,
+                                action: e.action,
+                                unresolved: false,
+                                opened: false,
+                            })
+                            .collect();
+                        let _ = events.send(Event::Scanned(files));
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("status: {e}")));
+                    }
+                }
+            }
+            Request::MoveFiles { change, files } => {
+                move_files(p4, &events, change, &files);
+                let _ = events.send(Event::Changed);
             }
             Request::LoadDiff {
                 change,
@@ -225,6 +347,44 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
         }
 
         let _ = events.send(Event::Idle);
+    }
+}
+
+/// Move files into `change`.
+///
+/// Files Perforce already has open are reopened. Files the scan found are not
+/// open at all, so they must be opened for the action that reconciles them —
+/// `add` for one Perforce has never seen, `edit` for one changed behind its
+/// back, `delete` for one removed from disk. Those are grouped so each action
+/// costs a single command.
+fn move_files(p4: &mut Client, events: &Sender<Event>, change: ChangeId, files: &[FileEntry]) {
+    let (open, unopened): (Vec<&FileEntry>, Vec<&FileEntry>) =
+        files.iter().partition(|f| f.opened);
+
+    if !open.is_empty() {
+        let paths: Vec<&str> = open.iter().map(|f| f.command_path()).collect();
+        let _ = events.send(Event::Log(format!("reopen -c {change} ({} files)", paths.len())));
+        if let Err(e) = p4.reopen(change, &paths) {
+            let _ = events.send(Event::Error(format!("reopen: {e}")));
+        }
+    }
+
+    for action in [FileAction::Add, FileAction::Edit, FileAction::Delete] {
+        let paths: Vec<&str> = unopened
+            .iter()
+            .filter(|f| f.action == action)
+            .map(|f| f.command_path())
+            .collect();
+        if paths.is_empty() {
+            continue;
+        }
+        let _ = events.send(Event::Log(format!(
+            "{action} -c {change} ({} files)",
+            paths.len()
+        )));
+        if let Err(e) = p4.open_files(&action, change, &paths) {
+            let _ = events.send(Event::Error(format!("{action}: {e}")));
+        }
     }
 }
 
@@ -378,9 +538,11 @@ fn load_files(
                 .into_iter()
                 .map(|f| FileEntry {
                     depot_path: f.depot_path,
+                    local_path: None,
                     rev: f.rev,
                     action: f.action,
                     unresolved: false,
+                    opened: true,
                 })
                 .collect(),
             Err(e) => {
@@ -416,13 +578,5 @@ fn load_files(
         return describe(p4, false);
     }
 
-    opened
-        .into_iter()
-        .map(|f| FileEntry {
-            depot_path: f.depot_path,
-            rev: f.rev,
-            action: f.action,
-            unresolved: f.unresolved,
-        })
-        .collect()
+    opened.into_iter().map(FileEntry::opened).collect()
 }

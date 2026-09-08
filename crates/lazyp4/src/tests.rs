@@ -10,7 +10,7 @@ use ratatui::Terminal;
 
 use crate::app::{Action, App, ChangeTab, Modal, Panel};
 use crate::ui;
-use crate::worker::{Event, FileEntry, Worker};
+use crate::worker::{Event, FileEntry, Request, Worker};
 
 const MINE: &str = "linus-desktop";
 
@@ -54,6 +54,11 @@ fn app() -> App {
             file("//darksim/main/AGENTS.md", FileAction::Add, false),
             file("//darksim/main/Foo.cpp", FileAction::Edit, true),
         ],
+        default_files: vec![file(
+            "//darksim/main/Config/DefaultEngine.ini",
+            FileAction::Edit,
+            false,
+        )],
     });
     app.handle(Event::Diff {
         change: ChangeId::Number(395),
@@ -109,9 +114,23 @@ fn theirs(n: u32, user: &str, desc: &str) -> Changelist {
 fn file(path: &str, action: FileAction, unresolved: bool) -> FileEntry {
     FileEntry {
         depot_path: path.into(),
+        local_path: None,
         rev: Some(3),
         action,
         unresolved,
+        opened: true,
+    }
+}
+
+/// A file the workspace scan found but Perforce has not opened.
+fn unopened(path: &str, action: FileAction) -> FileEntry {
+    FileEntry {
+        depot_path: path.into(),
+        local_path: Some(format!("E:\\ws{}", path.trim_start_matches("//darksim/main"))),
+        rev: None,
+        action,
+        unresolved: false,
+        opened: false,
     }
 }
 
@@ -314,6 +333,7 @@ fn a_stale_file_answer_is_ignored() {
     app.handle(Event::Files {
         change: ChangeId::Number(395),
         files: vec![file("//stale", FileAction::Edit, false)],
+        default_files: Vec::new(),
     });
 
     assert!(app.files.is_empty());
@@ -334,6 +354,164 @@ fn the_diff_pane_follows_the_selected_file() {
     let out = render(&app, 120, 40);
     assert!(out.contains("@@ -1,3 +1,3 @@"), "{out}");
     assert!(out.contains("+added"), "{out}");
+}
+
+#[test]
+fn files_are_split_into_the_changelist_and_the_default_group() {
+    let app = app();
+    let out = render(&app, 120, 40);
+    assert!(out.contains("In changelist 395"), "{out}");
+    assert!(out.contains("Default"), "{out}");
+    // Selection spans both groups as one sequence.
+    assert_eq!(app.all_files().len(), 3);
+}
+
+#[test]
+fn the_cursor_walks_from_one_group_into_the_next() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('j'));
+
+    assert_eq!(
+        app.selected_file().unwrap().depot_path,
+        "//darksim/main/Config/DefaultEngine.ini",
+        "j past the last file of the changelist lands in the default group"
+    );
+}
+
+#[test]
+fn space_sends_a_changelist_file_back_to_default() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char(' '));
+
+    let Some(Request::MoveFiles { change, files }) = app.last_request() else {
+        panic!("expected a move");
+    };
+    assert_eq!(change, ChangeId::Default);
+    assert_eq!(files[0].depot_path, "//darksim/main/AGENTS.md");
+}
+
+#[test]
+fn space_pulls_a_default_file_into_the_selected_changelist() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    // Step down into the Default group.
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char(' '));
+
+    let Some(Request::MoveFiles { change, files }) = app.last_request() else {
+        panic!("expected a move");
+    };
+    assert_eq!(change, ChangeId::Number(395));
+    assert_eq!(files[0].depot_path, "//darksim/main/Config/DefaultEngine.ini");
+}
+
+#[test]
+fn space_refuses_when_there_is_no_numbered_changelist_to_move_into() {
+    let mut app = app();
+    // Back to the default changelist, where both ends of the move are the same.
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('g'));
+    app.handle(Event::Files {
+        change: ChangeId::Default,
+        files: vec![file("//darksim/main/Loose.cpp", FileAction::Edit, false)],
+        default_files: Vec::new(),
+    });
+
+    app.focus = Panel::Files;
+    app.last_request(); // discard the setup traffic
+    press(&mut app, KeyCode::Char(' '));
+
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("numbered changelist")));
+}
+
+#[test]
+fn space_refuses_to_edit_a_submitted_changelist() {
+    let mut app = app();
+    app.focus = Panel::History;
+    press(&mut app, KeyCode::Char('g'));
+    app.handle(Event::Files {
+        change: ChangeId::Number(396),
+        files: vec![file("//darksim/main/.p4ignore", FileAction::Edit, false)],
+        default_files: Vec::new(),
+    });
+
+    app.focus = Panel::Files;
+    app.last_request(); // discard the setup traffic
+    press(&mut app, KeyCode::Char(' '));
+
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("submitted")));
+}
+
+#[test]
+fn scanned_files_join_the_default_group_and_untracked_ones_show_two_question_marks() {
+    let mut app = app();
+    app.handle(Event::Scanned(vec![
+        unopened("//darksim/main/NewThing.cpp", FileAction::Add),
+        unopened("//darksim/main/Changed.cpp", FileAction::Edit),
+    ]));
+
+    assert_eq!(app.all_files().len(), 5);
+    let out = render(&app, 120, 40);
+    assert!(out.contains("??"), "an untracked file is marked ??\n{out}");
+    assert!(out.contains("NewThing.cpp"), "{out}");
+    assert!(out.contains("Changed.cpp"), "{out}");
+}
+
+#[test]
+fn a_scanned_file_that_is_already_open_is_not_listed_twice() {
+    // `p4 status` reports open files too; they are already in a group.
+    let mut app = app();
+    app.handle(Event::Scanned(vec![unopened(
+        "//darksim/main/AGENTS.md",
+        FileAction::Add,
+    )]));
+
+    assert_eq!(app.all_files().len(), 3, "no duplicate of the open file");
+}
+
+#[test]
+fn space_on_an_untracked_file_opens_it_for_add_by_local_path() {
+    let mut app = app();
+    app.handle(Event::Scanned(vec![unopened(
+        "//darksim/main/NewThing.cpp",
+        FileAction::Add,
+    )]));
+
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('G'));
+    press(&mut app, KeyCode::Char(' '));
+
+    let Some(Request::MoveFiles { change, files }) = app.last_request() else {
+        panic!("expected a move");
+    };
+    assert_eq!(change, ChangeId::Number(395));
+    assert!(files[0].untracked());
+    // A file Perforce has never seen has no usable depot path.
+    assert!(files[0].command_path().starts_with("E:\\ws"));
+}
+
+#[test]
+fn u_starts_one_scan_at_a_time() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('u'));
+    assert!(app.scanning);
+    assert!(matches!(app.last_request(), Some(Request::ScanWorkspace)));
+
+    // A second press while the first is still running must not queue another.
+    press(&mut app, KeyCode::Char('u'));
+    assert!(app.last_request().is_none());
 }
 
 #[test]
@@ -423,7 +601,11 @@ fn key_release_events_are_ignored() {
 #[ignore = "prints the layout for inspection"]
 fn preview() {
     let mut app = app();
-    app.focus = Panel::Changelists;
+    app.handle(Event::Scanned(vec![
+        unopened("//darksim/main/NewThing.cpp", FileAction::Add),
+        unopened("//darksim/main/Changed.cpp", FileAction::Edit),
+    ]));
+    app.focus = Panel::Files;
     println!("{}", render(&app, 110, 34));
 }
 

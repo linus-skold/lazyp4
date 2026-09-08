@@ -93,6 +93,13 @@ impl ChangeTab {
     }
 }
 
+/// A row of the Files panel. Headers only appear when there are two groups.
+pub enum FileRow<'a> {
+    Header(String),
+    /// The file, and its index into [`App::all_files`].
+    File(usize, &'a FileEntry),
+}
+
 /// Which full-screen overlay is open, if any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
@@ -122,10 +129,18 @@ pub struct App {
     /// and Diff panels are following.
     pub change_source: Panel,
 
+    /// Files open in the selected changelist.
     pub files: Vec<FileEntry>,
+    /// Files open in the default changelist, plus anything the workspace scan
+    /// found. Shown below `files` so a file can be moved across.
+    pub loose_files: Vec<FileEntry>,
     /// Which changelist `files` belongs to; `None` while a load is in flight.
     pub files_for: Option<ChangeId>,
+    /// Index into [`App::all_files`].
     pub file_sel: usize,
+    /// Result of the last workspace scan, merged into `loose_files`.
+    pub scanned: Vec<FileEntry>,
+    pub scanning: bool,
 
     /// Diffs for the whole selected changelist, keyed by `diffs_for`.
     pub diffs: Vec<FileDiff>,
@@ -161,8 +176,11 @@ impl App {
             history_sel: 0,
             change_source: Panel::Changelists,
             files: Vec::new(),
+            loose_files: Vec::new(),
             files_for: None,
             file_sel: 0,
+            scanned: Vec::new(),
+            scanning: false,
             diffs: Vec::new(),
             diffs_for: None,
             diff_scroll: 0,
@@ -234,8 +252,49 @@ impl App {
         }
     }
 
+    /// Both groups end to end. `file_sel` indexes this.
+    pub fn all_files(&self) -> Vec<&FileEntry> {
+        self.files.iter().chain(self.loose_files.iter()).collect()
+    }
+
     pub fn selected_file(&self) -> Option<&FileEntry> {
-        self.files.get(self.file_sel)
+        self.all_files().get(self.file_sel).copied()
+    }
+
+    /// True when the selection sits in the lower group.
+    fn selection_is_loose(&self) -> bool {
+        self.file_sel >= self.files.len()
+    }
+
+    /// The rows to draw, headers included. Only present when there is a second
+    /// group to separate from the first.
+    pub fn file_rows(&self) -> Vec<FileRow<'_>> {
+        let split = self.files.len();
+        let in_change = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| FileRow::File(i, f));
+        let loose = self
+            .loose_files
+            .iter()
+            .enumerate()
+            .map(move |(i, f)| FileRow::File(split + i, f));
+
+        if self.loose_files.is_empty() {
+            return in_change.collect();
+        }
+
+        let heading = match self.selected_change() {
+            Some(cl) => format!("In changelist {}", cl.id),
+            None => "In changelist".to_owned(),
+        };
+
+        let mut rows = vec![FileRow::Header(heading)];
+        rows.extend(in_change);
+        rows.push(FileRow::Header("Default".to_owned()));
+        rows.extend(loose);
+        rows
     }
 
     /// The diff of the file under the cursor, if it has been fetched.
@@ -259,15 +318,32 @@ impl App {
                 self.clamp_selections();
                 self.follow_selection();
             }
-            Event::Files { change, files } => {
+            Event::Files {
+                change,
+                files,
+                default_files,
+            } => {
                 // A stale answer for a changelist we have moved off.
                 if self.pending_files == Some(change) {
                     self.pending_files = None;
                     self.files = files;
+                    self.loose_files = default_files;
+                    self.merge_scanned();
                     self.files_for = Some(change);
                     self.file_sel = 0;
                     self.request_diff();
                 }
+            }
+            Event::Scanned(files) => {
+                self.scanning = false;
+                self.scanned = files;
+                self.merge_scanned();
+            }
+            Event::Changed => {
+                // The lists on screen describe state that has just moved.
+                self.files_for = None;
+                self.diffs_for = None;
+                self.follow_selection();
             }
             Event::Diff { change, files } => {
                 if self.pending_diff == Some(change) {
@@ -321,6 +397,13 @@ impl App {
                 self.diffs_for = None;
                 self.worker.send(Request::Refresh);
             }
+            KeyCode::Char('u') => {
+                if !self.scanning {
+                    self.scanning = true;
+                    self.worker.send(Request::ScanWorkspace);
+                }
+            }
+            KeyCode::Char(' ') => self.move_selected_file(),
             KeyCode::Enter => {
                 let patch = diff::to_unified(&self.diffs);
                 if patch.is_empty() {
@@ -353,6 +436,65 @@ impl App {
         }
     }
 
+    /// Fold the last workspace scan into the lower group, dropping anything
+    /// Perforce has since opened — `p4 status` reports open files too, and they
+    /// already appear in one of the groups.
+    fn merge_scanned(&mut self) {
+        self.loose_files.retain(|f| f.opened);
+        let known: Vec<&str> = self
+            .files
+            .iter()
+            .chain(self.loose_files.iter())
+            .map(|f| f.depot_path.as_str())
+            .collect();
+        let fresh: Vec<FileEntry> = self
+            .scanned
+            .iter()
+            .filter(|f| !known.contains(&f.depot_path.as_str()))
+            .cloned()
+            .collect();
+        self.loose_files.extend(fresh);
+    }
+
+    /// Move the file under the cursor across the divider.
+    ///
+    /// Down from the changelist means back to the default one; up from the
+    /// default group means into the selected changelist, opening the file first
+    /// if the scan found it unopened.
+    fn move_selected_file(&mut self) {
+        if self.focus != Panel::Files {
+            return;
+        }
+        let Some(file) = self.selected_file().cloned() else {
+            return;
+        };
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+
+        if cl.status == ChangeStatus::Submitted {
+            self.error = Some("a submitted changelist cannot be changed".into());
+            return;
+        }
+        if cl.id == ChangeId::Default {
+            self.error =
+                Some("select a numbered changelist to move files into".into());
+            return;
+        }
+
+        let target = if self.selection_is_loose() {
+            cl.id
+        } else {
+            ChangeId::Default
+        };
+        self.busy = true;
+        self.error = None;
+        self.worker.send(Request::MoveFiles {
+            change: target,
+            files: vec![file],
+        });
+    }
+
     fn switch_tab(&mut self, by: isize) {
         if self.focus != Panel::Changelists {
             return;
@@ -369,7 +511,7 @@ impl App {
             return;
         }
         let (sel, len) = match self.focus {
-            Panel::Files => (self.file_sel, self.files.len()),
+            Panel::Files => (self.file_sel, self.all_files().len()),
             Panel::Changelists => (self.change_sel, self.tab_changes().len()),
             Panel::History => (self.history_sel, self.submitted.len()),
             Panel::Status | Panel::Diff => return,
@@ -388,7 +530,7 @@ impl App {
             return;
         }
         let len = match self.focus {
-            Panel::Files => self.files.len(),
+            Panel::Files => self.all_files().len(),
             Panel::Changelists => self.tab_changes().len(),
             Panel::History => self.submitted.len(),
             Panel::Status | Panel::Diff => return,
@@ -437,6 +579,7 @@ impl App {
     fn follow_selection(&mut self) {
         let Some(cl) = self.selected_change() else {
             self.files.clear();
+            self.loose_files.clear();
             self.files_for = None;
             self.diffs.clear();
             self.diffs_for = None;
@@ -447,6 +590,7 @@ impl App {
         }
 
         self.files.clear();
+        self.loose_files.clear();
         self.files_for = None;
         self.file_sel = 0;
         self.diffs.clear();
@@ -485,6 +629,12 @@ impl App {
 
     pub fn shutdown(&self) {
         self.worker.send(Request::Shutdown);
+    }
+
+    /// The most recent request sent to the worker, for the tests.
+    #[cfg(test)]
+    pub fn last_request(&self) -> Option<Request> {
+        self.worker.last_request()
     }
 }
 
