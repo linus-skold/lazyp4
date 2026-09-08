@@ -12,12 +12,14 @@
 
 mod client;
 mod commands;
+pub mod diff;
 mod error;
 mod model;
 mod record;
 
 pub use client::{Client, Connection};
 pub use commands::ChangeFilter;
+pub use diff::FileDiff;
 pub use error::{Error, Result};
 pub use model::*;
 

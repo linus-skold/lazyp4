@@ -3,7 +3,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use p4::{ChangeStatus, FileAction};
@@ -188,34 +188,67 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
-    let block = panel_block(app, Panel::Diff, None);
-
-    let body = match app.selected_file() {
-        Some(f) => vec![
-            Line::from(Span::styled(
-                f.depot_path.clone(),
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                match f.rev {
-                    Some(r) => format!("#{r}  {}", f.action),
-                    None => f.action.to_string(),
-                },
-                Style::default().fg(IDLE),
-            )),
-            Line::raw(""),
-            Line::from(Span::styled(
-                "diffs arrive with the hunk integration",
-                Style::default().fg(IDLE),
-            )),
-        ],
-        None => vec![Line::from(Span::styled(
-            "select a file",
-            Style::default().fg(IDLE),
-        ))],
+    let Some(file) = app.selected_file() else {
+        frame.render_widget(
+            Paragraph::new("select a file")
+                .style(Style::default().fg(IDLE))
+                .block(panel_block(app, Panel::Diff, None)),
+            area,
+        );
+        return;
     };
 
-    frame.render_widget(Paragraph::new(body).block(block).wrap(Wrap { trim: false }), area);
+    let title = match file.rev {
+        Some(r) => format!("{}#{r}", short_path(&file.depot_path)),
+        None => short_path(&file.depot_path).to_owned(),
+    };
+    let block = panel_block(app, Panel::Diff, Some(title));
+
+    let Some(diff) = app.selected_diff() else {
+        let msg = if app.diffs_for.is_none() {
+            "loading…"
+        } else {
+            "no diff for this file"
+        };
+        frame.render_widget(
+            Paragraph::new(msg)
+                .style(Style::default().fg(IDLE))
+                .block(block),
+            area,
+        );
+        return;
+    };
+
+    let lines: Vec<Line> = diff.hunks.lines().map(diff_line).collect();
+
+    // Keep the last screenful reachable but never scroll past it.
+    let visible = area.height.saturating_sub(2) as usize;
+    let max = lines.len().saturating_sub(visible);
+    let offset = app.diff_scroll.min(max);
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .scroll((offset as u16, 0)),
+        area,
+    );
+}
+
+/// Colour one line of a unified diff by its marker.
+fn diff_line(line: &str) -> Line<'static> {
+    let style = match line.chars().next() {
+        Some('+') => Style::default().fg(Color::Green),
+        Some('-') => Style::default().fg(Color::Red),
+        Some('@') => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Some('\\') => Style::default().fg(IDLE),
+        _ => Style::default(),
+    };
+    Line::from(Span::styled(line.to_owned(), style))
+}
+
+/// Depot paths are long and share a prefix; the tail is what identifies them.
+fn short_path(depot_path: &str) -> &str {
+    depot_path.trim_start_matches('/')
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {

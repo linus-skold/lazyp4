@@ -29,11 +29,22 @@ pub mod ffi {
         text: String,
     }
 
+    /// One `OutputInfo` line, and how much `text` had arrived before it.
+    ///
+    /// The two streams interleave: `p4 diff -du` sends each file's `---`/`+++`
+    /// header as info and the `@@` hunks that follow it as text. Keeping the
+    /// offset is what lets them be put back in order.
+    #[derive(Debug, Clone)]
+    struct InfoLine {
+        text: String,
+        at: u64,
+    }
+
     /// Everything one `run` produced.
     #[derive(Debug, Clone)]
     struct RunOutput {
         records: Vec<TaggedRecord>,
-        info: Vec<String>,
+        info: Vec<InfoLine>,
         text: Vec<u8>,
         messages: Vec<P4Message>,
     }
@@ -87,5 +98,29 @@ impl ffi::RunOutput {
     /// Messages the server flagged as warnings or worse.
     pub fn errors(&self) -> impl Iterator<Item = &ffi::P4Message> {
         self.messages.iter().filter(|m| m.severity >= 2)
+    }
+
+    /// The info and text streams put back into the order the server sent them,
+    /// which is what `p4` itself would have printed.
+    ///
+    /// Diff output needs this: the file headers arrive as info and the hunk
+    /// bodies as text, so neither stream means anything on its own.
+    pub fn merged_text(&self) -> String {
+        let mut out = String::new();
+        let mut copied = 0usize;
+
+        for line in &self.info {
+            let at = (line.at as usize).min(self.text.len());
+            if at > copied {
+                out.push_str(&String::from_utf8_lossy(&self.text[copied..at]));
+                copied = at;
+            }
+            out.push_str(&line.text);
+            if !line.text.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        out.push_str(&String::from_utf8_lossy(&self.text[copied..]));
+        out
     }
 }

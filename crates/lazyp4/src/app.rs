@@ -1,9 +1,15 @@
 //! Application state and key routing.
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{ChangeId, Changelist, ServerInfo};
+use p4::{diff, ChangeId, Changelist, FileDiff, ServerInfo};
 
 use crate::worker::{Event, FileEntry, Request, Worker};
+
+/// Something the main loop must do outside the alternate screen.
+pub enum Action {
+    /// Hand this patch to the external viewer.
+    OpenInHunk(String),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
@@ -75,6 +81,14 @@ pub struct App {
     pub files_for: Option<ChangeId>,
     pub file_sel: usize,
 
+    /// Diffs for the whole selected changelist, keyed by `diffs_for`.
+    pub diffs: Vec<FileDiff>,
+    pub diffs_for: Option<ChangeId>,
+    pub diff_scroll: usize,
+
+    /// Work for the main loop to do once the terminal is released.
+    pub action: Option<Action>,
+
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
     /// The last error, shown in the status bar until something replaces it.
@@ -83,6 +97,7 @@ pub struct App {
     worker: Worker,
     /// Set while a file load has been asked for but not answered.
     pending_files: Option<ChangeId>,
+    pending_diff: Option<ChangeId>,
 }
 
 impl App {
@@ -99,11 +114,22 @@ impl App {
             files: Vec::new(),
             files_for: None,
             file_sel: 0,
+            diffs: Vec::new(),
+            diffs_for: None,
+            diff_scroll: 0,
+            action: None,
             log: Vec::new(),
             error: None,
             worker,
             pending_files: None,
+            pending_diff: None,
         }
+    }
+
+    /// The diff of the file under the cursor, if it has been fetched.
+    pub fn selected_diff(&self) -> Option<&FileDiff> {
+        let file = self.selected_file()?;
+        self.diffs.iter().find(|d| d.depot_path == file.depot_path)
     }
 
     pub fn selected_change(&self) -> Option<&Changelist> {
@@ -131,6 +157,15 @@ impl App {
                     self.files = files;
                     self.files_for = Some(change);
                     self.file_sel = 0;
+                    self.request_diff();
+                }
+            }
+            Event::Diff { change, files } => {
+                if self.pending_diff == Some(change) {
+                    self.pending_diff = None;
+                    self.diffs = files;
+                    self.diffs_for = Some(change);
+                    self.diff_scroll = 0;
                 }
             }
             Event::Log(cmd) => {
@@ -173,7 +208,17 @@ impl App {
             KeyCode::Char('r') => {
                 self.busy = true;
                 self.error = None;
+                self.diffs_for = None;
+                self.files_for = None;
                 self.worker.send(Request::Refresh);
+            }
+            KeyCode::Enter => {
+                let patch = self.changelist_patch();
+                if patch.is_empty() {
+                    self.error = Some("nothing to diff in this changelist".into());
+                } else {
+                    self.action = Some(Action::OpenInHunk(patch));
+                }
             }
 
             KeyCode::Tab | KeyCode::Char(']') => self.focus = self.focus.step(1),
@@ -196,6 +241,10 @@ impl App {
     }
 
     fn move_by(&mut self, delta: isize) {
+        if self.focus == Panel::Diff {
+            self.diff_scroll = self.diff_scroll.saturating_add_signed(delta);
+            return;
+        }
         let (sel, len) = match self.focus {
             Panel::Changelists => (self.change_sel, self.changes.len()),
             Panel::Files => (self.file_sel, self.files.len()),
@@ -209,6 +258,11 @@ impl App {
     }
 
     fn move_to(&mut self, index: usize) {
+        if self.focus == Panel::Diff {
+            // `G` on a diff means "as far down as it goes"; the renderer clamps.
+            self.diff_scroll = if index == usize::MAX { usize::MAX } else { 0 };
+            return;
+        }
         let len = match self.focus {
             Panel::Changelists => self.changes.len(),
             Panel::Files => self.files.len(),
@@ -228,7 +282,13 @@ impl App {
                     self.request_files();
                 }
             }
-            Panel::Files => self.file_sel = index,
+            Panel::Files => {
+                if self.file_sel != index {
+                    self.file_sel = index;
+                    // The pane shows one file at a time, so its scroll is per file.
+                    self.diff_scroll = 0;
+                }
+            }
             Panel::Status | Panel::Diff => {}
         }
     }
@@ -251,6 +311,9 @@ impl App {
         self.files.clear();
         self.files_for = None;
         self.file_sel = 0;
+        self.diffs.clear();
+        self.diffs_for = None;
+        self.diff_scroll = 0;
         self.pending_files = Some(change);
         self.busy = true;
         self.worker.send(Request::LoadFiles {
@@ -258,6 +321,36 @@ impl App {
             status,
             shelved,
         });
+    }
+
+    /// Ask for the whole changelist's diff once its file list is known.
+    fn request_diff(&mut self) {
+        let Some((change, status, shelved)) = self
+            .selected_change()
+            .map(|cl| (cl.id, cl.status, cl.shelved))
+        else {
+            return;
+        };
+        if self.diffs_for == Some(change) || self.pending_diff == Some(change) {
+            return;
+        }
+
+        self.diffs.clear();
+        self.diffs_for = None;
+        self.diff_scroll = 0;
+        self.pending_diff = Some(change);
+        self.busy = true;
+        self.worker.send(Request::LoadDiff {
+            change,
+            status,
+            shelved,
+            files: self.files.clone(),
+        });
+    }
+
+    /// The patch for the whole selected changelist, for the external viewer.
+    fn changelist_patch(&self) -> String {
+        diff::to_unified(&self.diffs)
     }
 
     pub fn shutdown(&self) {

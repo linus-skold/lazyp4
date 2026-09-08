@@ -4,11 +4,11 @@
 //! widget tree onto a [`TestBackend`] and assert on the resulting cells.
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{ChangeId, ChangeStatus, Changelist, FileAction, ServerInfo};
+use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, Modal, Panel};
+use crate::app::{Action, App, Modal, Panel};
 use crate::ui;
 use crate::worker::{Event, FileEntry, Worker};
 
@@ -34,6 +34,14 @@ fn app() -> App {
             file("//darksim/main/AGENTS.md", FileAction::Add, false),
             file("//darksim/main/Foo.cpp", FileAction::Edit, true),
         ],
+    });
+    app.handle(Event::Diff {
+        change: ChangeId::Number(395),
+        files: vec![FileDiff {
+            depot_path: "//darksim/main/Foo.cpp".into(),
+            rev: Some(3),
+            hunks: "@@ -1,3 +1,3 @@\n context\n-gone\n+added\n".into(),
+        }],
     });
     app.handle(Event::Idle);
     app
@@ -196,6 +204,57 @@ fn key_release_events_are_ignored() {
         KeyEventKind::Release,
     ))));
     assert_eq!(app.change_sel, 0);
+}
+
+#[test]
+fn the_diff_pane_follows_the_selected_file() {
+    let mut app = app();
+    // The first file has no diff of its own.
+    assert!(app.selected_diff().is_none());
+    assert!(render(&app, 120, 30).contains("no diff for this file"));
+
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('j'));
+
+    assert_eq!(app.selected_diff().unwrap().depot_path, "//darksim/main/Foo.cpp");
+    let out = render(&app, 120, 30);
+    assert!(out.contains("@@ -1,3 +1,3 @@"), "{out}");
+    assert!(out.contains("+added"), "{out}");
+    assert!(out.contains("darksim/main/Foo.cpp#3"), "{out}");
+}
+
+#[test]
+fn moving_between_files_resets_the_diff_scroll() {
+    let mut app = app();
+    app.focus = Panel::Diff;
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.diff_scroll, 1);
+
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.diff_scroll, 0, "scroll belongs to the file, not the pane");
+}
+
+#[test]
+fn enter_asks_to_open_the_changelist_patch() {
+    let mut app = app();
+    press(&mut app, KeyCode::Enter);
+
+    let Some(Action::OpenInHunk(patch)) = app.action.take() else {
+        panic!("expected a patch to open");
+    };
+    assert!(patch.contains("diff --git a/darksim/main/Foo.cpp"));
+    assert!(patch.contains("+added"));
+}
+
+#[test]
+fn enter_with_nothing_to_diff_reports_it() {
+    let mut app = app();
+    app.diffs.clear();
+    press(&mut app, KeyCode::Enter);
+
+    assert!(app.action.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("nothing to diff")));
 }
 
 /// Dev aid: `cargo test -p lazyp4 -- --ignored --nocapture preview` prints the

@@ -65,9 +65,7 @@ class Collector : public ClientUser {
         out_.records.push_back(std::move(rec));
     }
 
-    void OutputInfo(char, const char *data) override {
-        out_.info.push_back(rust::String::lossy(data));
-    }
+    void OutputInfo(char, const char *data) override { add_info(data); }
 
     void OutputText(const char *data, int length) override {
         append(data, length);
@@ -91,6 +89,22 @@ class Collector : public ClientUser {
     void Message(Error *err) override { record(err); }
     void HandleError(Error *err) override { record(err); }
 
+    // `p4 diff` is computed on the client, and the default implementation
+    // writes the result straight to stdout instead of through OutputText. Send
+    // it to a temp file and read it back, so the diff reaches the caller like
+    // any other output.
+    void Diff(FileSys *f1, FileSys *f2, int doPage, char *diffFlags,
+              Error *e) override {
+        std::unique_ptr<FileSys> out(FileSys::CreateGlobalTemp(f1->GetType()));
+        ClientUser::Diff(f1, f2, out.get(), doPage, diffFlags, e);
+        if (e->Test()) return;
+
+        StrBuf buf;
+        out->ReadFile(&buf, e);
+        if (e->Test()) return;
+        append(buf.Text(), buf.Length());
+    }
+
     // Never block on a terminal: the answer is whatever the caller supplied.
     void Prompt(const StrPtr &, StrBuf &rsp, int, Error *) override {
         rsp.Set(input_.c_str());
@@ -106,6 +120,14 @@ class Collector : public ClientUser {
     }
 
    private:
+    // Stamped with the text length so the two streams can be re-interleaved.
+    void add_info(const std::string &line) {
+        InfoLine info;
+        info.text = rust::String::lossy(line);
+        info.at = static_cast<uint64_t>(out_.text.size());
+        out_.info.push_back(std::move(info));
+    }
+
     void append(const char *data, int length) {
         out_.text.reserve(out_.text.size() + length);
         for (int i = 0; i < length; ++i)
@@ -115,7 +137,7 @@ class Collector : public ClientUser {
     void record(Error *err) {
         if (!err || err->GetSeverity() == E_EMPTY) return;
         if (err->GetSeverity() == E_INFO) {
-            out_.info.push_back(rust::String::lossy(format(*err)));
+            add_info(format(*err));
             return;
         }
         P4Message msg;

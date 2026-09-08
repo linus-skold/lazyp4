@@ -6,13 +6,44 @@ use crate::error::{Error, Result};
 /// How to reach the server. Every field left empty falls back to the ambient
 /// P4PORT/P4USER/P4CLIENT the way the `p4` binary resolves them, so the common
 /// case is `Connection::default()`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Connection {
     pub port: Option<String>,
     pub user: Option<String>,
     pub client: Option<String>,
     pub charset: Option<String>,
     pub cwd: Option<String>,
+    /// Ask for tagged output. On means structured records; off means the plain
+    /// text `p4` prints.
+    ///
+    /// The server drops diff content from a tagged reply — `describe -du` and
+    /// `diff2 -du` come back as metadata with no diff at all — so anything that
+    /// wants the diff text needs a connection with this off. It cannot be
+    /// changed afterwards: the P4API sends it during the handshake.
+    pub tagged: bool,
+}
+
+impl Default for Connection {
+    fn default() -> Self {
+        Connection {
+            port: None,
+            user: None,
+            client: None,
+            charset: None,
+            cwd: None,
+            tagged: true,
+        }
+    }
+}
+
+impl Connection {
+    /// A connection that returns plain text rather than records.
+    pub fn untagged() -> Self {
+        Connection {
+            tagged: false,
+            ..Default::default()
+        }
+    }
 }
 
 /// A connection to a Perforce server.
@@ -46,7 +77,7 @@ impl Client {
                 c.as_mut().set_cwd(v);
             }
             // Tagged output must be requested before the handshake.
-            c.as_mut().set_tagged(true);
+            c.as_mut().set_tagged(conn.tagged);
             c.as_mut()
                 .connect()
                 .map_err(|e| Error::Connection(e.to_string()))?;

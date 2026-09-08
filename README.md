@@ -3,8 +3,9 @@
 A terminal UI for Perforce (Helix Core), in the style of lazygit: browse
 changelists and their files in panels, and read diffs in the shell.
 
-Status: early. You can browse pending, shelved and submitted changelists and
-their files. Diffs are not wired up yet.
+Status: early. You can browse pending, shelved and submitted changelists, read
+each file's diff in the pane, and press `Enter` to open the whole changelist in
+[hunk](https://hunk.dev). Nothing writes to the depot yet.
 
 ```powershell
 cargo run -p lazyp4
@@ -16,6 +17,7 @@ cargo run -p lazyp4
 | `g` `G` | first, last |
 | `Tab`, `[` `]` | cycle panel |
 | `1` `2` `3` `4` | focus a panel — the number is shown in its title |
+| `Enter` | open the changelist's patch in `hunk` |
 | `r` | refresh |
 | `x` | command log — every P4API call made |
 | `?` | help |

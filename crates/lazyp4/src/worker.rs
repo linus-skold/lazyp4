@@ -8,7 +8,10 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use p4::{ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection, FileAction, ServerInfo};
+use p4::{
+    diff, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection, FileAction,
+    FileDiff, ServerInfo,
+};
 
 /// A file in a changelist, from whichever command could see it.
 #[derive(Debug, Clone)]
@@ -27,6 +30,14 @@ pub enum Request {
         status: ChangeStatus,
         shelved: bool,
     },
+    /// Diff a whole changelist at once. One command covers every file, and the
+    /// pane picks out the one under the cursor.
+    LoadDiff {
+        change: ChangeId,
+        status: ChangeStatus,
+        shelved: bool,
+        files: Vec<FileEntry>,
+    },
     Shutdown,
 }
 
@@ -39,6 +50,10 @@ pub enum Event {
     Files {
         change: ChangeId,
         files: Vec<FileEntry>,
+    },
+    Diff {
+        change: ChangeId,
+        files: Vec<FileDiff>,
     },
     /// A command the worker ran, for the command log.
     Log(String),
@@ -97,8 +112,18 @@ fn spawn_input_reader(events: Sender<Event>) {
     });
 }
 
+/// Two connections to the same server.
+///
+/// The server strips diff content out of a tagged reply, and tagging is fixed
+/// at handshake time, so structured data and diff text cannot share one
+/// connection.
+struct Clients {
+    tagged: Client,
+    untagged: Client,
+}
+
 fn run(requests: Receiver<Request>, events: Sender<Event>) {
-    let mut client: Option<Client> = None;
+    let mut clients: Option<Clients> = None;
 
     while let Ok(req) = requests.recv() {
         if matches!(req, Request::Shutdown) {
@@ -106,20 +131,25 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
         }
 
         // Connect lazily, and again after the server drops us.
-        if client.as_mut().is_none_or(Client::dropped) {
-            match Client::connect(&Connection::default()) {
-                Ok(c) => {
-                    let _ = events.send(Event::Log("connect".into()));
-                    client = Some(c);
-                }
-                Err(e) => {
+        if clients
+            .as_mut()
+            .is_none_or(|c| c.tagged.dropped() || c.untagged.dropped())
+        {
+            let _ = events.send(Event::Log("connect".into()));
+            match (
+                Client::connect(&Connection::default()),
+                Client::connect(&Connection::untagged()),
+            ) {
+                (Ok(tagged), Ok(untagged)) => clients = Some(Clients { tagged, untagged }),
+                (Err(e), _) | (_, Err(e)) => {
                     let _ = events.send(Event::Error(format!("connect: {e}")));
                     let _ = events.send(Event::Idle);
                     continue;
                 }
             }
         }
-        let p4 = client.as_mut().expect("connected above");
+        let both = clients.as_mut().expect("connected above");
+        let p4 = &mut both.tagged;
 
         match req {
             Request::Shutdown => return,
@@ -161,10 +191,136 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 let files = load_files(p4, &events, change, status, shelved);
                 let _ = events.send(Event::Files { change, files });
             }
+            Request::LoadDiff {
+                change,
+                status,
+                shelved,
+                files,
+            } => {
+                let diffs = load_diff(both, &events, change, status, shelved, &files);
+                let _ = events.send(Event::Diff {
+                    change,
+                    files: diffs,
+                });
+            }
         }
 
         let _ = events.send(Event::Idle);
     }
+}
+
+/// Diff every file in a changelist.
+///
+/// One command covers the whole changelist. Adds and deletes are then filled in
+/// separately: Perforce reports no diff for either, because there is nothing on
+/// one of the two sides to compare against.
+fn load_diff(
+    c: &mut Clients,
+    events: &Sender<Event>,
+    change: ChangeId,
+    status: ChangeStatus,
+    shelved: bool,
+    entries: &[FileEntry],
+) -> Vec<FileDiff> {
+    let submitted = status == ChangeStatus::Submitted;
+
+    let raw = if submitted || shelved {
+        let _ = events.send(Event::Log(format!(
+            "describe -du{} {change}",
+            if shelved { " -S" } else { "" }
+        )));
+        c.untagged.describe_diff_text(change, shelved)
+    } else {
+        // Pending files live in the workspace, so the diff is against local
+        // content. Naming the files keeps other open changelists out of it.
+        let paths: Vec<&str> = entries.iter().map(|f| f.depot_path.as_str()).collect();
+        let _ = events.send(Event::Log(format!("diff -du ({} files)", paths.len())));
+        c.untagged.diff_text(&paths)
+    };
+
+    let mut diffs = match raw {
+        Ok(text) => diff::normalize(&text),
+        Err(e) => {
+            let _ = events.send(Event::Error(format!("diff: {e}")));
+            Vec::new()
+        }
+    };
+
+    // Anything the diff did not cover: adds, deletes, and files whose content
+    // has to be fetched whole.
+    for entry in entries {
+        if diffs
+            .iter()
+            .any(|d| d.depot_path == entry.depot_path && !d.hunks.is_empty())
+        {
+            continue;
+        }
+        let added = matches!(
+            entry.action,
+            FileAction::Add | FileAction::MoveAdd | FileAction::Branch | FileAction::Import
+        );
+        let deleted = matches!(entry.action, FileAction::Delete | FileAction::MoveDelete);
+        if !added && !deleted {
+            continue;
+        }
+
+        let Some(content) = whole_content(c, events, change, submitted, shelved, entry, added)
+        else {
+            continue;
+        };
+
+        let patch = diff::whole_file(&entry.depot_path, &content, added);
+        // whole_file emits a complete patch; re-read it so every entry is
+        // shaped the same way.
+        if let Some(parsed) = diff::normalize(&patch).into_iter().next() {
+            match diffs.iter_mut().find(|d| d.depot_path == entry.depot_path) {
+                Some(existing) => existing.hunks = parsed.hunks,
+                None => diffs.push(parsed),
+            }
+        }
+    }
+
+    diffs
+}
+
+/// Whole content of a file that has no diff, from wherever it can be reached.
+fn whole_content(
+    c: &mut Clients,
+    events: &Sender<Event>,
+    change: ChangeId,
+    submitted: bool,
+    shelved: bool,
+    entry: &FileEntry,
+    added: bool,
+) -> Option<String> {
+    let path = &entry.depot_path;
+
+    let spec = if shelved {
+        // A shelf is addressed by its changelist, not by a revision.
+        Some(format!("{path}@={change}"))
+    } else if submitted {
+        match (added, entry.rev) {
+            (true, Some(rev)) => Some(format!("{path}#{rev}")),
+            // The content of a delete is whatever the revision before it held.
+            (false, Some(rev)) if rev > 1 => Some(format!("{path}#{}", rev - 1)),
+            _ => None,
+        }
+    } else if !added {
+        // A pending delete still has its depot revision on the server.
+        entry.rev.map(|rev| format!("{path}#{rev}"))
+    } else {
+        None
+    };
+
+    if let Some(spec) = spec {
+        let _ = events.send(Event::Log(format!("print -q {spec}")));
+        return c.untagged.print_text(&spec).ok();
+    }
+
+    // A pending add exists only in the workspace.
+    let _ = events.send(Event::Log(format!("where {path}")));
+    let local = c.tagged.local_path(path).ok().flatten()?;
+    std::fs::read_to_string(local).ok()
 }
 
 /// Picks the command that can actually see this changelist's files.
