@@ -40,18 +40,30 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 fn panel_block(app: &App, panel: Panel, extra: Option<String>) -> Block<'static> {
     let focused = app.focus == panel;
-    let title = match extra {
-        Some(e) => format!(" {} {e} ", panel.title()),
-        None => format!(" {} ", panel.title()),
+    let name = match extra {
+        Some(e) => format!("{} {e} ", panel.title()),
+        None => format!("{} ", panel.title()),
     };
     Block::bordered()
         .border_style(Style::default().fg(if focused { FOCUS } else { IDLE }))
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(if focused { FOCUS } else { Color::Gray })
-                .add_modifier(Modifier::BOLD),
-        ))
+        // The number is the key that focuses this panel; the title is the only
+        // place a reader can discover that.
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" {} ", panel.number()),
+                Style::default().fg(Color::Black).bg(if focused {
+                    FOCUS
+                } else {
+                    Color::Gray
+                }),
+            ),
+            Span::styled(
+                format!(" {name}"),
+                Style::default()
+                    .fg(if focused { FOCUS } else { Color::Gray })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]))
 }
 
 fn draw_changes(frame: &mut Frame, app: &App, area: Rect) {
@@ -176,9 +188,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::bordered()
-        .border_style(Style::default().fg(IDLE))
-        .title(Span::styled(" Diff ", Style::default().fg(Color::Gray)));
+    let block = panel_block(app, Panel::Diff, None);
 
     let body = match app.selected_file() {
         Some(f) => vec![
@@ -233,27 +243,34 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_help(frame: &mut Frame) {
-    let rows = [
-        ("j / k, ↓ / ↑", "move"),
-        ("g / G", "first / last"),
-        ("Tab, [ ]", "cycle panel"),
-        ("1 2 3", "jump to panel"),
-        ("r", "refresh"),
-        ("x", "command log"),
-        ("?", "this help"),
-        ("q", "quit"),
-    ];
-    let lines: Vec<Line> = rows
-        .iter()
-        .map(|(keys, what)| {
-            Line::from(vec![
-                Span::styled(format!("  {keys:<14}"), Style::default().fg(FOCUS)),
-                Span::raw(*what),
-            ])
-        })
-        .collect();
+    let row = |keys: String, what: String| {
+        Line::from(vec![
+            Span::styled(format!("  {keys:<14}"), Style::default().fg(FOCUS)),
+            Span::raw(what),
+        ])
+    };
 
-    overlay(frame, " Keys ", lines, 44, 12);
+    let mut lines = vec![
+        row("j / k, ↓ / ↑".into(), "move".into()),
+        row("g / G".into(), "first / last".into()),
+        row("Tab, [ ]".into(), "cycle panel".into()),
+        Line::raw(""),
+    ];
+    lines.extend(
+        Panel::ORDER
+            .iter()
+            .map(|p| row(p.number().to_string(), format!("focus {}", p.title()))),
+    );
+    lines.push(Line::raw(""));
+    lines.extend([
+        row("r".into(), "refresh".into()),
+        row("x".into(), "command log".into()),
+        row("?".into(), "this help".into()),
+        row("q".into(), "quit".into()),
+    ]);
+
+    let height = lines.len() as u16 + 2;
+    overlay(frame, " Keys ", lines, 44, height);
 }
 
 fn draw_log(frame: &mut Frame, app: &App) {

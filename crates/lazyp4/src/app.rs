@@ -10,15 +10,36 @@ pub enum Panel {
     Changelists,
     Files,
     Status,
+    Diff,
 }
 
 impl Panel {
-    const ORDER: [Panel; 3] = [Panel::Changelists, Panel::Files, Panel::Status];
+    /// Tab order, and the source of the number key each panel answers to: the
+    /// panel at index 0 is `1`. Keep them in step — the number is drawn in the
+    /// panel's own title.
+    pub const ORDER: [Panel; 4] = [
+        Panel::Changelists,
+        Panel::Files,
+        Panel::Status,
+        Panel::Diff,
+    ];
+
+    fn index(self) -> usize {
+        Self::ORDER.iter().position(|p| *p == self).unwrap_or(0)
+    }
 
     fn step(self, by: isize) -> Panel {
-        let i = Self::ORDER.iter().position(|p| *p == self).unwrap_or(0) as isize;
         let n = Self::ORDER.len() as isize;
-        Self::ORDER[((i + by).rem_euclid(n)) as usize]
+        Self::ORDER[((self.index() as isize + by).rem_euclid(n)) as usize]
+    }
+
+    /// The key that focuses this panel, as a digit.
+    pub fn number(self) -> usize {
+        self.index() + 1
+    }
+
+    pub fn from_number(n: usize) -> Option<Panel> {
+        Self::ORDER.get(n.checked_sub(1)?).copied()
     }
 
     pub fn title(self) -> &'static str {
@@ -26,6 +47,7 @@ impl Panel {
             Panel::Changelists => "Changelists",
             Panel::Files => "Files",
             Panel::Status => "Status",
+            Panel::Diff => "Diff",
         }
     }
 }
@@ -156,9 +178,11 @@ impl App {
 
             KeyCode::Tab | KeyCode::Char(']') => self.focus = self.focus.step(1),
             KeyCode::BackTab | KeyCode::Char('[') => self.focus = self.focus.step(-1),
-            KeyCode::Char('1') => self.focus = Panel::Changelists,
-            KeyCode::Char('2') => self.focus = Panel::Files,
-            KeyCode::Char('3') => self.focus = Panel::Status,
+            KeyCode::Char(c @ '1'..='9') => {
+                if let Some(panel) = Panel::from_number(c as usize - '0' as usize) {
+                    self.focus = panel;
+                }
+            }
 
             KeyCode::Char('j') | KeyCode::Down => self.move_by(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_by(-1),
@@ -175,7 +199,7 @@ impl App {
         let (sel, len) = match self.focus {
             Panel::Changelists => (self.change_sel, self.changes.len()),
             Panel::Files => (self.file_sel, self.files.len()),
-            Panel::Status => return,
+            Panel::Status | Panel::Diff => return,
         };
         if len == 0 {
             return;
@@ -188,7 +212,7 @@ impl App {
         let len = match self.focus {
             Panel::Changelists => self.changes.len(),
             Panel::Files => self.files.len(),
-            Panel::Status => return,
+            Panel::Status | Panel::Diff => return,
         };
         if len == 0 {
             return;
@@ -205,7 +229,7 @@ impl App {
                 }
             }
             Panel::Files => self.file_sel = index,
-            Panel::Status => {}
+            Panel::Status | Panel::Diff => {}
         }
     }
 

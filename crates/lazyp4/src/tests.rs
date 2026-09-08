@@ -136,12 +136,38 @@ fn a_stale_file_answer_is_ignored() {
 fn tab_cycles_panels_and_wraps() {
     let mut app = app();
     assert_eq!(app.focus, Panel::Changelists);
-    press(&mut app, KeyCode::Tab);
-    assert_eq!(app.focus, Panel::Files);
-    press(&mut app, KeyCode::Tab);
-    assert_eq!(app.focus, Panel::Status);
-    press(&mut app, KeyCode::Tab);
+    for expected in [Panel::Files, Panel::Status, Panel::Diff, Panel::Changelists] {
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focus, expected);
+    }
+}
+
+#[test]
+fn number_keys_focus_their_panel() {
+    let mut app = app();
+    for panel in Panel::ORDER {
+        // Start somewhere else so the assertion cannot pass by accident.
+        app.focus = Panel::Status;
+        press(&mut app, KeyCode::Char(char::from_digit(panel.number() as u32, 10).unwrap()));
+        assert_eq!(app.focus, panel, "key {} should focus {:?}", panel.number(), panel);
+    }
+}
+
+#[test]
+fn a_number_with_no_panel_is_ignored() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('9'));
     assert_eq!(app.focus, Panel::Changelists);
+}
+
+#[test]
+fn every_panel_shows_its_number() {
+    let out = render(&app(), 120, 30);
+    for panel in Panel::ORDER {
+        // The title reads "┌ 1  Changelists".
+        let title = format!(" {}  {}", panel.number(), panel.title());
+        assert!(out.contains(&title), "missing {title:?} in\n{out}");
+    }
 }
 
 #[test]

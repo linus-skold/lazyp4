@@ -15,7 +15,7 @@ cargo run -p lazyp4
 | `j` `k`, `↓` `↑` | move |
 | `g` `G` | first, last |
 | `Tab`, `[` `]` | cycle panel |
-| `1` `2` `3` | jump to panel |
+| `1` `2` `3` `4` | focus a panel — the number is shown in its title |
 | `r` | refresh |
 | `x` | command log — every P4API call made |
 | `?` | help |
