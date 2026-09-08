@@ -60,13 +60,18 @@ impl Editor {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => return Outcome::Cancel,
-            KeyCode::Char('s') if ctrl => return Outcome::Save,
             // Ctrl-C leaves the popup rather than the application: quitting
             // mid-edit would throw the text away without saying so.
             KeyCode::Char('c') if ctrl => return Outcome::Cancel,
 
-            KeyCode::Char(c) => self.insert(c),
+            // A bare Enter saves, so a newline needs a modifier. Ctrl-J is the
+            // dependable one: Alt-Enter is Windows Terminal's fullscreen
+            // toggle, and Shift-Enter is not reported by every terminal.
+            KeyCode::Char('j') if ctrl => self.split_line(),
+            KeyCode::Enter if key.modifiers.is_empty() => return Outcome::Save,
             KeyCode::Enter => self.split_line(),
+
+            KeyCode::Char(c) => self.insert(c),
             KeyCode::Backspace => self.backspace(),
             KeyCode::Delete => self.delete(),
 

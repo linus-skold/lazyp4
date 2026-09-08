@@ -416,7 +416,7 @@ impl App {
                 self.diffs_for = None;
                 self.worker.send(Request::Refresh);
             }
-            KeyCode::Char('E') => self.edit_description(),
+            KeyCode::Char('e') => self.edit_description(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;

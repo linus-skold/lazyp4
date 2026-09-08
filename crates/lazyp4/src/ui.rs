@@ -62,7 +62,7 @@ fn draw_editor(frame: &mut Frame, editor: &Editor) {
             Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
-            " Ctrl-S save   Esc cancel ",
+            " Enter save   Ctrl-J newline   Esc cancel ",
             Style::default().fg(IDLE),
         ));
     let inner = block.inner(area);
@@ -440,7 +440,7 @@ fn draw_help(frame: &mut Frame) {
         row("Enter".into(), "open the patch in hunk".into()),
         row("Space".into(), "move a file in or out of the changelist".into()),
         row("u".into(), "scan for untracked files (slow)".into()),
-        row("E".into(), "edit the changelist description".into()),
+        row("e".into(), "edit the changelist description".into()),
         Line::raw(""),
     ];
     lines.extend(

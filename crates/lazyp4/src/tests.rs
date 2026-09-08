@@ -518,7 +518,7 @@ fn u_starts_one_scan_at_a_time() {
 fn e_opens_the_description_of_the_selected_changelist() {
     let mut app = app();
     app.focus = Panel::Changelists;
-    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('e'));
 
     let editor = app.editor.as_ref().expect("editor should be open");
     assert_eq!(editor.title, "Description of 395");
@@ -526,14 +526,14 @@ fn e_opens_the_description_of_the_selected_changelist() {
 
     let out = render(&app, 120, 40);
     assert!(out.contains("Description of 395"), "{out}");
-    assert!(out.contains("Ctrl-S save"), "{out}");
+    assert!(out.contains("Enter save"), "{out}");
 }
 
 #[test]
 fn the_editor_takes_keys_that_are_commands_elsewhere() {
     let mut app = app();
     app.focus = Panel::Changelists;
-    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('e'));
 
     for c in ['q', 'x', 'r', 'j'] {
         press(&mut app, KeyCode::Char(c));
@@ -545,18 +545,14 @@ fn the_editor_takes_keys_that_are_commands_elsewhere() {
 }
 
 #[test]
-fn ctrl_s_saves_the_description() {
+fn enter_saves_the_description() {
     let mut app = app();
     app.focus = Panel::Changelists;
-    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('e'));
     press(&mut app, KeyCode::Char('!'));
     app.last_request(); // discard the setup traffic
 
-    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
-        KeyCode::Char('s'),
-        KeyModifiers::CONTROL,
-        KeyEventKind::Press,
-    ))));
+    press(&mut app, KeyCode::Enter);
 
     assert!(app.editor.is_none(), "the popup closes on save");
     let Some(Request::SetDescription {
@@ -571,10 +567,47 @@ fn ctrl_s_saves_the_description() {
 }
 
 #[test]
+fn ctrl_j_writes_a_newline_since_enter_now_saves() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('e'));
+    app.last_request();
+
+    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
+        KeyCode::Char('j'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
+    ))));
+    press(&mut app, KeyCode::Char('x'));
+
+    let editor = app.editor.as_ref().expect("still editing, not saved");
+    assert_eq!(editor.text(), "# Do not submit\nx");
+    assert!(app.last_request().is_none(), "Ctrl-J must not save");
+}
+
+#[test]
+fn a_modified_enter_writes_a_newline_too() {
+    // Terminals that report Ctrl-Enter or Shift-Enter should not save either.
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('e'));
+    app.last_request();
+
+    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
+        KeyCode::Enter,
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
+    ))));
+
+    assert!(app.editor.is_some());
+    assert_eq!(app.editor.as_ref().unwrap().text(), "# Do not submit\n");
+}
+
+#[test]
 fn esc_discards_the_edit() {
     let mut app = app();
     app.focus = Panel::Changelists;
-    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('e'));
     press(&mut app, KeyCode::Char('x'));
     app.last_request();
 
@@ -588,18 +621,14 @@ fn esc_discards_the_edit() {
 fn an_empty_description_is_refused_before_the_round_trip() {
     let mut app = app();
     app.focus = Panel::Changelists;
-    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('e'));
     // Clear the pre-filled text.
     for _ in 0.."# Do not submit".len() {
         press(&mut app, KeyCode::Backspace);
     }
     app.last_request();
 
-    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
-        KeyCode::Char('s'),
-        KeyModifiers::CONTROL,
-        KeyEventKind::Press,
-    ))));
+    press(&mut app, KeyCode::Enter);
 
     assert!(app.editor.is_some(), "the popup stays open so the text is not lost");
     assert!(app.last_request().is_none());
@@ -611,13 +640,13 @@ fn the_default_and_submitted_changelists_have_no_description_to_edit() {
     let mut app = app();
     app.focus = Panel::Changelists;
     press(&mut app, KeyCode::Char('g')); // the default changelist
-    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('e'));
     assert!(app.editor.is_none());
     assert!(app.error.as_deref().is_some_and(|e| e.contains("default")));
 
     app.focus = Panel::History;
     press(&mut app, KeyCode::Char('g'));
-    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('e'));
     assert!(app.editor.is_none());
     assert!(app.error.as_deref().is_some_and(|e| e.contains("submitted")));
 }
@@ -713,8 +742,9 @@ fn preview() {
         unopened("//darksim/main/NewThing.cpp", FileAction::Add),
         unopened("//darksim/main/Changed.cpp", FileAction::Edit),
     ]));
-    app.focus = Panel::Files;
-    println!("{}", render(&app, 110, 34));
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('e'));
+    println!("{}", render(&app, 110, 20));
 }
 
 #[test]

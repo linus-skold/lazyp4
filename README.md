@@ -58,9 +58,12 @@ tens of seconds on a large tree, so it only runs when you ask.
 
 ## Editing a description
 
-`E` on a changelist opens its description in a popup. `Ctrl-S` saves, `Esc`
-discards. Only the `Description` field of the spec is rewritten, so everything
-else about the changelist is left exactly as the server sent it.
+`e` on a changelist opens its description in a popup. `Enter` saves and `Esc`
+discards, so `Ctrl-J` is what adds a newline — `Alt-Enter` would collide with
+Windows Terminal's fullscreen toggle.
+
+Only the `Description` field of the spec is rewritten, so everything else about
+the changelist is left exactly as the server sent it.
 
 | Key | Action |
 | --- | --- |
@@ -68,7 +71,7 @@ else about the changelist is left exactly as the server sent it.
 | `g` `G` | first, last |
 | `Tab`, `Shift-Tab` | cycle panels |
 | `[` `]` | switch tab within a panel |
-| `E` | edit the changelist description |
+| `e` | edit the changelist description |
 | `Space` | move a file in or out of the changelist |
 | `u` | scan for files that are changed but not open (slow) |
 | `Enter` | open the changelist's patch in `hunk` |
