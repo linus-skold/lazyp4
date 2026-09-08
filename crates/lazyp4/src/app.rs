@@ -3,6 +3,7 @@
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use p4::{diff, ChangeId, ChangeStatus, Changelist, FileDiff, ServerInfo};
 
+use crate::editor::{Editor, Outcome};
 use crate::worker::{Event, FileEntry, Request, Worker};
 
 /// Something the main loop must do outside the alternate screen.
@@ -147,6 +148,9 @@ pub struct App {
     pub diffs_for: Option<ChangeId>,
     pub diff_scroll: usize,
 
+    /// Open description editor, if any. Takes every keystroke while it lives.
+    pub editor: Option<Editor>,
+
     /// Work for the main loop to do once the terminal is released.
     pub action: Option<Action>,
 
@@ -181,6 +185,7 @@ impl App {
             file_sel: 0,
             scanned: Vec::new(),
             scanning: false,
+            editor: None,
             diffs: Vec::new(),
             diffs_for: None,
             diff_scroll: 0,
@@ -340,10 +345,13 @@ impl App {
                 self.merge_scanned();
             }
             Event::Changed => {
-                // The lists on screen describe state that has just moved.
+                // A write can add or empty the default changelist and can
+                // rewrite a description, so reload the lists too, not just the
+                // files.
                 self.files_for = None;
                 self.diffs_for = None;
-                self.follow_selection();
+                self.busy = true;
+                self.worker.send(Request::Refresh);
             }
             Event::Diff { change, files } => {
                 if self.pending_diff == Some(change) {
@@ -368,6 +376,17 @@ impl App {
     fn on_key(&mut self, key: KeyEvent) {
         // Windows sends both press and release; act on press only.
         if key.kind != KeyEventKind::Press {
+            return;
+        }
+
+        // The editor swallows everything, including keys that are commands
+        // elsewhere — `q` has to be typeable in a description.
+        if let Some(editor) = &mut self.editor {
+            match editor.handle(key) {
+                Outcome::Continue => {}
+                Outcome::Cancel => self.editor = None,
+                Outcome::Save => self.save_description(),
+            }
             return;
         }
 
@@ -397,6 +416,7 @@ impl App {
                 self.diffs_for = None;
                 self.worker.send(Request::Refresh);
             }
+            KeyCode::Char('E') => self.edit_description(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -454,6 +474,52 @@ impl App {
             .cloned()
             .collect();
         self.loose_files.extend(fresh);
+    }
+
+    /// Open the description of the selected changelist for editing.
+    fn edit_description(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if cl.id == ChangeId::Default {
+            // The default changelist is not a spec and has no description.
+            self.error = Some("the default changelist has no description".into());
+            return;
+        }
+        if cl.status == ChangeStatus::Submitted {
+            self.error = Some("a submitted changelist cannot be edited".into());
+            return;
+        }
+
+        self.error = None;
+        self.editor = Some(Editor::new(
+            format!("Description of {}", cl.id),
+            &cl.description,
+        ));
+    }
+
+    fn save_description(&mut self) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        if editor.is_blank() {
+            // Perforce rejects an empty description; say so before the round trip.
+            self.error = Some("a description cannot be empty".into());
+            return;
+        }
+        let description = editor.text();
+        let Some(cl) = self.selected_change() else {
+            self.editor = None;
+            return;
+        };
+
+        self.editor = None;
+        self.busy = true;
+        self.error = None;
+        self.worker.send(Request::SetDescription {
+            change: cl.id,
+            description,
+        });
     }
 
     /// Move the file under the cursor across the divider.

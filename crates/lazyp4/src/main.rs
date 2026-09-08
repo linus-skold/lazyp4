@@ -1,6 +1,7 @@
 //! lazyp4 — a terminal UI for Perforce.
 
 mod app;
+mod editor;
 mod hunk;
 #[cfg(test)]
 mod tests;

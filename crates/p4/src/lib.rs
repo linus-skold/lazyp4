@@ -16,6 +16,7 @@ pub mod diff;
 mod error;
 mod model;
 mod record;
+pub mod spec;
 
 pub use client::{Client, Connection};
 pub use commands::ChangeFilter;

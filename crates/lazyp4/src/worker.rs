@@ -66,6 +66,10 @@ pub enum Request {
     /// Walk the workspace for files that differ but are not open. Slow, so it
     /// only runs when the user asks.
     ScanWorkspace,
+    SetDescription {
+        change: ChangeId,
+        description: String,
+    },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
     MoveFiles {
@@ -103,7 +107,8 @@ pub enum Event {
     },
     /// Files the workspace scan turned up.
     Scanned(Vec<FileEntry>),
-    /// A write finished; whatever is on screen is now stale.
+    /// A write finished. Descriptions and the default changelist's very
+    /// existence both come from the change lists, so everything is now stale.
     Changed,
     Diff {
         change: ChangeId,
@@ -330,6 +335,18 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
             }
             Request::MoveFiles { change, files } => {
                 move_files(p4, &events, change, &files);
+                let _ = events.send(Event::Changed);
+            }
+            Request::SetDescription {
+                change,
+                description,
+            } => {
+                // The spec form only comes back whole on an untagged
+                // connection; a tagged reply is a record, not a form.
+                let _ = events.send(Event::Log(format!("change -o {change} | change -i")));
+                if let Err(e) = both.untagged.set_description(change, &description) {
+                    let _ = events.send(Event::Error(format!("change: {e}")));
+                }
                 let _ = events.send(Event::Changed);
             }
             Request::LoadDiff {

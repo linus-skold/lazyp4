@@ -515,6 +515,114 @@ fn u_starts_one_scan_at_a_time() {
 }
 
 #[test]
+fn e_opens_the_description_of_the_selected_changelist() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('E'));
+
+    let editor = app.editor.as_ref().expect("editor should be open");
+    assert_eq!(editor.title, "Description of 395");
+    assert_eq!(editor.text(), "# Do not submit");
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("Description of 395"), "{out}");
+    assert!(out.contains("Ctrl-S save"), "{out}");
+}
+
+#[test]
+fn the_editor_takes_keys_that_are_commands_elsewhere() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('E'));
+
+    for c in ['q', 'x', 'r', 'j'] {
+        press(&mut app, KeyCode::Char(c));
+    }
+
+    assert!(!app.quit, "q must be typeable in a description");
+    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.editor.as_ref().unwrap().text(), "# Do not submitqxrj");
+}
+
+#[test]
+fn ctrl_s_saves_the_description() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('!'));
+    app.last_request(); // discard the setup traffic
+
+    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
+        KeyCode::Char('s'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
+    ))));
+
+    assert!(app.editor.is_none(), "the popup closes on save");
+    let Some(Request::SetDescription {
+        change,
+        description,
+    }) = app.last_request()
+    else {
+        panic!("expected a description write");
+    };
+    assert_eq!(change, ChangeId::Number(395));
+    assert_eq!(description, "# Do not submit!");
+}
+
+#[test]
+fn esc_discards_the_edit() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('E'));
+    press(&mut app, KeyCode::Char('x'));
+    app.last_request();
+
+    press(&mut app, KeyCode::Esc);
+
+    assert!(app.editor.is_none());
+    assert!(app.last_request().is_none(), "nothing is written on cancel");
+}
+
+#[test]
+fn an_empty_description_is_refused_before_the_round_trip() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('E'));
+    // Clear the pre-filled text.
+    for _ in 0.."# Do not submit".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    app.last_request();
+
+    app.handle(Event::Input(TermEvent::Key(KeyEvent::new_with_kind(
+        KeyCode::Char('s'),
+        KeyModifiers::CONTROL,
+        KeyEventKind::Press,
+    ))));
+
+    assert!(app.editor.is_some(), "the popup stays open so the text is not lost");
+    assert!(app.last_request().is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("empty")));
+}
+
+#[test]
+fn the_default_and_submitted_changelists_have_no_description_to_edit() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('g')); // the default changelist
+    press(&mut app, KeyCode::Char('E'));
+    assert!(app.editor.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("default")));
+
+    app.focus = Panel::History;
+    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Char('E'));
+    assert!(app.editor.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("submitted")));
+}
+
+#[test]
 fn moving_between_files_resets_the_diff_scroll() {
     let mut app = app();
     app.focus = Panel::Diff;

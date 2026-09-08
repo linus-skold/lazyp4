@@ -9,6 +9,7 @@ use ratatui::Frame;
 use p4::{Changelist, FileAction};
 
 use crate::app::{change_marker, App, ChangeTab, FileRow, Modal, Panel};
+use crate::editor::Editor;
 use crate::worker::FileEntry;
 
 const FOCUS: Color = Color::Yellow;
@@ -39,6 +40,41 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::None => {}
         Modal::Help => draw_help(frame),
         Modal::Log => draw_log(frame, app),
+    }
+
+    // Drawn last so it sits above any overlay.
+    if let Some(editor) = &app.editor {
+        draw_editor(frame, editor);
+    }
+}
+
+fn draw_editor(frame: &mut Frame, editor: &Editor) {
+    let width = frame.area().width.saturating_sub(10).min(80).max(20);
+    // Room for the text, the border, and the key hint.
+    let height = (editor.lines().len() as u16 + 3).min(frame.area().height);
+    let area = centered(frame.area(), width, height);
+
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(FOCUS))
+        .title(Span::styled(
+            format!(" {} ", editor.title),
+            Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " Ctrl-S save   Esc cancel ",
+            Style::default().fg(IDLE),
+        ));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines: Vec<Line> = editor.lines().iter().map(|l| Line::raw(l.clone())).collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    let (row, col) = editor.cursor();
+    // Only place the cursor where there is room to draw it.
+    if (row as u16) < inner.height && (col as u16) <= inner.width {
+        frame.set_cursor_position((inner.x + col as u16, inner.y + row as u16));
     }
 }
 
@@ -404,6 +440,7 @@ fn draw_help(frame: &mut Frame) {
         row("Enter".into(), "open the patch in hunk".into()),
         row("Space".into(), "move a file in or out of the changelist".into()),
         row("u".into(), "scan for untracked files (slow)".into()),
+        row("E".into(), "edit the changelist description".into()),
         Line::raw(""),
     ];
     lines.extend(

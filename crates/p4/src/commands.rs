@@ -240,6 +240,30 @@ impl Client {
             .collect())
     }
 
+    /// The changelist spec form, as `p4 change -o` prints it.
+    ///
+    /// Needs an untagged connection: a tagged reply is a record, not the form
+    /// that `save_change_spec` must send back.
+    pub fn change_spec(&mut self, change: ChangeId) -> Result<String> {
+        let id = change.to_string();
+        Ok(self.run("change", &["-o", &id])?.merged_text())
+    }
+
+    /// Write a changelist spec form back.
+    pub fn save_change_spec(&mut self, form: &str) -> Result<()> {
+        self.run_with_input("change", &["-i"], form)?;
+        Ok(())
+    }
+
+    /// Replace a pending changelist's description.
+    ///
+    /// Reads the current form and edits one field of it, so nothing else about
+    /// the changelist is disturbed.
+    pub fn set_description(&mut self, change: ChangeId, description: &str) -> Result<()> {
+        let form = self.change_spec(change)?;
+        self.save_change_spec(&crate::spec::set_field(&form, "Description", description))
+    }
+
     /// Move already-open files into another changelist.
     ///
     /// `ChangeId::Default` moves them back out of a numbered changelist.
