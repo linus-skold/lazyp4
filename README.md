@@ -4,8 +4,8 @@ A terminal UI for Perforce (Helix Core), in the style of lazygit: browse
 changelists and their files in panels, and read diffs in the shell.
 
 Status: early. You can browse pending, shelved and submitted changelists, read
-each file's diff in the pane, and press `Enter` to open the whole changelist in
-[hunk](https://hunk.dev). Nothing writes to the depot yet.
+each file's diff in the pane, move files between changelists, and edit
+changelist descriptions. Submitting is not wired up yet.
 
 ```powershell
 cargo run -p lazyp4
@@ -35,6 +35,25 @@ name. `Local` also carries the **default** changelist, which `p4 changes` never
 reports, so anything checked out without a numbered changelist still appears.
 
 Selecting a changelist — in either `3` or `4` — repoints Files and Diff at it.
+
+## Reading a diff
+
+The diff renders in the pane, not in another program. Each row carries the line
+number on both sides, and where a line was rewritten rather than replaced
+outright, only the words that actually changed are highlighted:
+
+```text
+@@ -38,7 +38,8 @@
+38 38  Intermediate/
+39 39  Saved/
+41    -let x = compute(alpha, beta);
+   41 +let x = compute(alpha, gamma);
+   42 +Binaries/
+```
+
+A line replaced end to end is left unhighlighted — lighting up every word of it
+says nothing. Long lines are truncated rather than wrapped, so `h` and `l`
+scroll sideways, and `Enter` gives the diff the whole window.
 
 ## Moving files between changelists
 
@@ -74,7 +93,8 @@ the changelist is left exactly as the server sent it.
 | `e` | edit the changelist description |
 | `Space` | move a file in or out of the changelist |
 | `u` | scan for files that are changed but not open (slow) |
-| `Enter` | open the changelist's patch in `hunk` |
+| `Enter` | give the diff the whole window (`Esc` to leave) |
+| `h` `l`, `←` `→` | scroll the diff sideways |
 | `r` | refresh |
 | `x` | command log — every P4API call made |
 | `?` | help |

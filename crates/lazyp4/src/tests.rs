@@ -8,7 +8,7 @@ use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use crate::app::{Action, App, ChangeTab, Modal, Panel};
+use crate::app::{App, ChangeTab, Modal, Panel};
 use crate::ui;
 use crate::worker::{Event, FileEntry, Request, Worker};
 
@@ -661,28 +661,71 @@ fn moving_between_files_resets_the_diff_scroll() {
 }
 
 #[test]
-fn enter_asks_to_open_the_changelist_patch() {
+fn enter_gives_the_diff_the_whole_window() {
     let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('j'));
     press(&mut app, KeyCode::Enter);
 
-    let Some(Action::OpenInHunk(patch)) = app.action.take() else {
-        panic!("expected a patch to open");
-    };
-    assert!(patch.contains("diff --git a/darksim/main/Foo.cpp"));
-    assert!(patch.contains("+added"));
+    assert!(app.diff_fullscreen);
+    assert_eq!(app.focus, Panel::Diff, "focus follows, so j/k scroll it");
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("@@ -1,3 +1,3 @@"), "{out}");
+    assert!(!out.contains("Changelists"), "the panels give up the window\n{out}");
 }
 
 #[test]
-fn enter_with_nothing_to_diff_reports_it() {
+fn enter_and_esc_both_leave_fullscreen() {
     let mut app = app();
-    app.diffs.clear();
     press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.diff_fullscreen);
 
-    assert!(app.action.is_none());
-    assert!(app
-        .error
-        .as_deref()
-        .is_some_and(|e| e.contains("nothing to diff")));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Esc);
+    assert!(!app.diff_fullscreen);
+}
+
+#[test]
+fn the_diff_shows_line_numbers_and_marks_the_changed_words() {
+    let mut app = app();
+    // Set directly: an Event::Diff here would be discarded as a stale answer.
+    app.diffs = vec![FileDiff {
+        depot_path: "//darksim/main/AGENTS.md".into(),
+        rev: Some(3),
+        hunks: "@@ -10,2 +10,2 @@\n keep\n-let x = f(a, b);\n+let x = f(a, c);\n".into(),
+    }];
+
+    let out = render(&app, 120, 40);
+    // Both sides are numbered from the hunk header.
+    assert!(out.contains("10 10"), "line numbers in the gutter\n{out}");
+    assert!(out.contains("let x = f(a, b);"), "{out}");
+}
+
+#[test]
+fn the_diff_scrolls_sideways_for_long_lines() {
+    let mut app = app();
+    app.focus = Panel::Diff;
+    assert_eq!(app.diff_hscroll, 0);
+
+    press(&mut app, KeyCode::Char('l'));
+    assert_eq!(app.diff_hscroll, 8);
+    press(&mut app, KeyCode::Char('h'));
+    assert_eq!(app.diff_hscroll, 0);
+    press(&mut app, KeyCode::Char('h'));
+    assert_eq!(app.diff_hscroll, 0, "and stops at the left edge");
+}
+
+#[test]
+fn changing_file_resets_the_sideways_scroll_too() {
+    let mut app = app();
+    app.focus = Panel::Diff;
+    press(&mut app, KeyCode::Char('l'));
+
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.diff_hscroll, 0);
 }
 
 #[test]
@@ -739,9 +782,13 @@ fn preview() {
         unopened("//darksim/main/NewThing.cpp", FileAction::Add),
         unopened("//darksim/main/Changed.cpp", FileAction::Edit),
     ]));
-    app.focus = Panel::Changelists;
-    press(&mut app, KeyCode::Char('e'));
-    println!("{}", render(&app, 110, 20));
+    app.diffs = vec![FileDiff {
+        depot_path: "//darksim/main/AGENTS.md".into(),
+        rev: Some(3),
+        hunks: "@@ -38,7 +38,8 @@\n Intermediate/\n Saved/\n \n-let x = compute(alpha, beta);\n+let x = compute(alpha, gamma);\n+Binaries/\n \n # Ignore UBT\n"
+            .into(),
+    }];
+    println!("{}", render(&app, 110, 22));
 }
 
 #[test]

@@ -9,6 +9,7 @@ use ratatui::Frame;
 use p4::{Changelist, FileAction};
 
 use crate::app::{change_marker, App, ChangeTab, FileRow, Modal, Panel};
+use crate::diffview::{self, Row, RowKind};
 use crate::editor::Editor;
 use crate::worker::FileEntry;
 
@@ -18,6 +19,16 @@ const IDLE: Color = Color::DarkGray;
 pub fn draw(frame: &mut Frame, app: &App) {
     let [body, status_bar] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+    // A wide diff is worth the whole window; the panels are one key away.
+    if app.diff_fullscreen {
+        draw_diff(frame, app, body);
+        draw_status_bar(frame, app, status_bar);
+        if let Some(editor) = &app.editor {
+            draw_editor(frame, editor);
+        }
+        return;
+    }
+
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(42), Constraint::Min(0)]).areas(body);
     // Status is fixed; the three lists share what is left.
@@ -368,7 +379,12 @@ fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    let lines: Vec<Line> = diff.hunks.lines().map(diff_line).collect();
+    let rows = diffview::rows(&diff.hunks);
+    let width = gutter_width(&rows);
+    let lines: Vec<Line> = rows
+        .iter()
+        .map(|r| diff_line(r, width, app.diff_hscroll))
+        .collect();
 
     // Keep the last screenful reachable but never scroll past it.
     let visible = area.height.saturating_sub(2) as usize;
@@ -376,23 +392,79 @@ fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     let offset = app.diff_scroll.min(max);
 
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .scroll((offset as u16, 0)),
+        Paragraph::new(lines).block(block).scroll((offset as u16, 0)),
         area,
     );
 }
 
-/// Colour one line of a unified diff by its marker.
-fn diff_line(line: &str) -> Line<'static> {
-    let style = match line.chars().next() {
-        Some('+') => Style::default().fg(Color::Green),
-        Some('-') => Style::default().fg(Color::Red),
-        Some('@') => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        Some('\\') => Style::default().fg(IDLE),
-        _ => Style::default(),
+/// Digits needed for the line numbers, so both columns line up.
+fn gutter_width(rows: &[Row]) -> usize {
+    let widest = rows
+        .iter()
+        .filter_map(|r| r.old_no.max(r.new_no))
+        .max()
+        .unwrap_or(0);
+    widest.to_string().len().max(2)
+}
+
+/// One diff row: line numbers, marker, then the text with the words that
+/// changed picked out.
+fn diff_line(row: &Row, width: usize, hscroll: usize) -> Line<'static> {
+    if row.kind == RowKind::Header {
+        return Line::from(Span::styled(
+            row.text(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    let number = |n: Option<u32>| match n {
+        Some(n) => format!("{n:>width$}"),
+        None => " ".repeat(width),
     };
-    Line::from(Span::styled(line.to_owned(), style))
+    let mut spans = vec![Span::styled(
+        format!("{} {} ", number(row.old_no), number(row.new_no)),
+        Style::default().fg(IDLE),
+    )];
+
+    let (fg, changed_bg) = match row.kind {
+        RowKind::Add => (Color::Green, Color::Green),
+        RowKind::Delete => (Color::Red, Color::Red),
+        _ => (Color::Gray, Color::Gray),
+    };
+    spans.push(Span::styled(
+        row.marker().to_string(),
+        Style::default().fg(fg).add_modifier(Modifier::BOLD),
+    ));
+
+    let base = match row.kind {
+        RowKind::Context => Style::default(),
+        RowKind::Note => Style::default().fg(IDLE),
+        _ => Style::default().fg(fg),
+    };
+
+    // Horizontal scroll applies to the text, never to the gutter.
+    let mut skip = hscroll;
+    for segment in &row.segments {
+        let chars = segment.text.chars().count();
+        if skip >= chars {
+            skip -= chars;
+            continue;
+        }
+        let text: String = segment.text.chars().skip(skip).collect();
+        skip = 0;
+        spans.push(Span::styled(
+            text,
+            if segment.changed {
+                // Reversed rather than merely brighter, so the changed words
+                // stand out even where the whole line is already coloured.
+                Style::default().bg(changed_bg).fg(Color::Black)
+            } else {
+                base
+            },
+        ));
+    }
+
+    Line::from(spans)
 }
 
 /// Depot paths are long and share a prefix; the tail is what identifies them.
@@ -437,7 +509,8 @@ fn draw_help(frame: &mut Frame) {
         row("g / G".into(), "first / last".into()),
         row("Tab / Shift-Tab".into(), "cycle panels".into()),
         row("[ ]".into(), "switch tab within a panel".into()),
-        row("Enter".into(), "open the patch in hunk".into()),
+        row("Enter".into(), "diff fullscreen (Esc to leave)".into()),
+        row("h / l, ← / →".into(), "scroll the diff sideways".into()),
         row("Space".into(), "move a file in or out of the changelist".into()),
         row("u".into(), "scan for untracked files (slow)".into()),
         row("e".into(), "edit the changelist description".into()),

@@ -1,16 +1,10 @@
 //! Application state and key routing.
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{diff, ChangeId, ChangeStatus, Changelist, FileDiff, ServerInfo};
+use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, ServerInfo};
 
 use crate::editor::{Editor, Outcome};
 use crate::worker::{Event, FileEntry, Request, Worker};
-
-/// Something the main loop must do outside the alternate screen.
-pub enum Action {
-    /// Hand this patch to the external viewer.
-    OpenInHunk(String),
-}
 
 /// The panels, in tab order. The layout runs top to bottom down the left
 /// column, with the diff filling the right.
@@ -147,12 +141,13 @@ pub struct App {
     pub diffs: Vec<FileDiff>,
     pub diffs_for: Option<ChangeId>,
     pub diff_scroll: usize,
+    /// Columns scrolled off the left of the diff, for lines wider than the pane.
+    pub diff_hscroll: usize,
+    /// Give the diff the whole window instead of the right-hand pane.
+    pub diff_fullscreen: bool,
 
     /// Open description editor, if any. Takes every keystroke while it lives.
     pub editor: Option<Editor>,
-
-    /// Work for the main loop to do once the terminal is released.
-    pub action: Option<Action>,
 
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
@@ -189,7 +184,8 @@ impl App {
             diffs: Vec::new(),
             diffs_for: None,
             diff_scroll: 0,
-            action: None,
+            diff_hscroll: 0,
+            diff_fullscreen: false,
             log: Vec::new(),
             error: None,
             worker,
@@ -359,6 +355,7 @@ impl App {
                     self.diffs = files;
                     self.diffs_for = Some(change);
                     self.diff_scroll = 0;
+                    self.diff_hscroll = 0;
                 }
             }
             Event::Log(cmd) => {
@@ -425,13 +422,12 @@ impl App {
             }
             KeyCode::Char(' ') => self.move_selected_file(),
             KeyCode::Enter => {
-                let patch = diff::to_unified(&self.diffs);
-                if patch.is_empty() {
-                    self.error = Some("nothing to diff in this changelist".into());
-                } else {
-                    self.action = Some(Action::OpenInHunk(patch));
+                self.diff_fullscreen = !self.diff_fullscreen;
+                if self.diff_fullscreen {
+                    self.focus = Panel::Diff;
                 }
             }
+            KeyCode::Esc if self.diff_fullscreen => self.diff_fullscreen = false,
 
             KeyCode::Tab => self.focus = self.focus.step(1),
             KeyCode::BackTab => self.focus = self.focus.step(-1),
@@ -451,6 +447,14 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => self.move_to(usize::MAX),
             KeyCode::PageDown => self.move_by(10),
             KeyCode::PageUp => self.move_by(-10),
+            // Long lines are truncated rather than wrapped, so the diff scrolls
+            // sideways.
+            KeyCode::Char('h') | KeyCode::Left if self.focus == Panel::Diff => {
+                self.diff_hscroll = self.diff_hscroll.saturating_sub(8);
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.focus == Panel::Diff => {
+                self.diff_hscroll += 8;
+            }
 
             _ => {}
         }
@@ -614,6 +618,7 @@ impl App {
                     self.file_sel = index;
                     // The pane shows one file at a time, so its scroll is per file.
                     self.diff_scroll = 0;
+                    self.diff_hscroll = 0;
                 }
             }
             Panel::Changelists => {
@@ -662,6 +667,7 @@ impl App {
         self.diffs.clear();
         self.diffs_for = None;
         self.diff_scroll = 0;
+        self.diff_hscroll = 0;
         self.pending_files = Some(cl.id);
         self.busy = true;
         self.worker.send(Request::LoadFiles {
@@ -683,6 +689,7 @@ impl App {
         self.diffs.clear();
         self.diffs_for = None;
         self.diff_scroll = 0;
+        self.diff_hscroll = 0;
         self.pending_diff = Some(cl.id);
         self.busy = true;
         self.worker.send(Request::LoadDiff {
