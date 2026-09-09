@@ -572,7 +572,10 @@ impl App {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => self.modal = Modal::None,
                 KeyCode::Char('?') if self.modal == Modal::Help => self.modal = Modal::None,
-                KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::None,
+                // The log is a debugging aid, so it lives one step in, behind
+                // the help sheet rather than on a key of its own.
+                KeyCode::Char('x') if self.modal == Modal::Help => self.modal = Modal::Log,
+                KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::Help,
                 KeyCode::Char('H') if self.modal == Modal::History => self.modal = Modal::None,
                 KeyCode::Char('j') | KeyCode::Down if self.modal == Modal::History => {
                     self.history_scroll += 1;
@@ -593,7 +596,6 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.modal = Modal::Help,
-            KeyCode::Char('x') => self.modal = Modal::Log,
             KeyCode::Char('r') => {
                 self.busy = true;
                 self.error = None;

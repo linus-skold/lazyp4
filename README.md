@@ -168,8 +168,7 @@ the changelist is left exactly as the server sent it.
 | `r` | refresh |
 | `H` | revision history of the selected file |
 | `U` | undo a submitted change into a new changelist |
-| `x` | command log — every P4API call made |
-| `?` | help |
+| `?` | help — every key, grouped; `x` from there opens the p4 command log |
 | `q` | quit |
 
 lazyp4 uses the ambient `P4PORT`, `P4USER` and `P4CLIENT`, so run it from a

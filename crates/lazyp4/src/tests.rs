@@ -1357,7 +1357,7 @@ fn modals_open_and_close_without_quitting() {
     let mut app = app();
     press(&mut app, KeyCode::Char('?'));
     assert_eq!(app.modal, Modal::Help);
-    assert!(render(&app, 120, 40).contains("switch tab within a panel"));
+    assert!(render(&app, 120, 40).contains("switch tab"));
 
     // `q` closes the overlay rather than the application.
     press(&mut app, KeyCode::Char('q'));
@@ -1366,6 +1366,61 @@ fn modals_open_and_close_without_quitting() {
 
     press(&mut app, KeyCode::Char('q'));
     assert!(app.quit);
+}
+
+#[test]
+fn the_command_log_lives_behind_the_help_sheet() {
+    let mut app = app();
+    app.handle(Event::Log("changes -l -s pending".into()));
+
+    // No longer a key of its own.
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(app.modal, Modal::None);
+
+    press(&mut app, KeyCode::Char('?'));
+    assert!(render(&app, 120, 40).contains("the p4 command log"), "help points at it");
+
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(app.modal, Modal::Log);
+    assert!(render(&app, 120, 40).contains("changes -l -s pending"));
+
+    // And back, rather than dumping you out of help entirely.
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(app.modal, Modal::Help);
+}
+
+#[test]
+fn the_help_sheet_groups_keys_by_where_they_apply() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('?'));
+    let out = render(&app, 120, 40);
+
+    for heading in ["Navigation", "Files", "Changelists", "Diff and app"] {
+        assert!(out.contains(heading), "missing {heading}\n{out}");
+    }
+    assert!(out.contains("revert, discarding"), "{out}");
+}
+
+#[test]
+fn the_status_bar_shows_the_focused_panel_s_keys() {
+    let mut app = app();
+
+    app.focus = Panel::Files;
+    let out = render(&app, 120, 40);
+    assert!(out.contains("revert"), "{out}");
+    assert!(out.contains("scan"), "{out}");
+
+    app.focus = Panel::Changelists;
+    let out = render(&app, 120, 40);
+    assert!(out.contains("submit"), "{out}");
+    assert!(out.contains("describe"), "{out}");
+    assert!(!out.contains("scan"), "Files keys are gone\n{out}");
+
+    app.focus = Panel::History;
+    assert!(render(&app, 120, 40).contains("undo"));
+
+    // The everywhere keys stay put.
+    assert!(render(&app, 120, 40).contains("quit"));
 }
 
 #[test]
@@ -1387,6 +1442,11 @@ fn key_release_events_are_ignored() {
 #[test]
 #[ignore = "prints the layout for inspection"]
 fn preview() {
+    let mut helping = app();
+    helping.focus = Panel::Files;
+    press(&mut helping, KeyCode::Char('?'));
+    println!("{}\n", render(&helping, 100, 24));
+
     let mut submitting = app();
     press(&mut submitting, KeyCode::Char('c'));
     println!("{}\n", render(&submitting, 92, 12));

@@ -674,63 +674,149 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             " working… ",
             Style::default().fg(Color::Black).bg(FOCUS),
         )),
-        (None, false) => Line::from(vec![
-            Span::styled(" ? ", Style::default().fg(Color::Black).bg(Color::Gray)),
-            Span::styled(" help   ", Style::default().fg(IDLE)),
-            Span::styled(" x ", Style::default().fg(Color::Black).bg(Color::Gray)),
-            Span::styled(" log   ", Style::default().fg(IDLE)),
-            Span::styled(" r ", Style::default().fg(Color::Black).bg(Color::Gray)),
-            Span::styled(" refresh   ", Style::default().fg(IDLE)),
-            Span::styled(" q ", Style::default().fg(Color::Black).bg(Color::Gray)),
-            Span::styled(" quit", Style::default().fg(IDLE)),
-        ]),
+        (None, false) => {
+            let mut spans = Vec::new();
+            // What the focused panel can do comes first, then the keys that
+            // work everywhere.
+            for (key, what) in panel_keys(app.focus) {
+                spans.push(Span::styled(
+                    format!(" {key} "),
+                    Style::default().fg(Color::Black).bg(FOCUS),
+                ));
+                spans.push(Span::styled(format!(" {what}   "), Style::default()));
+            }
+            for (key, what) in [("r", "refresh"), ("?", "help"), ("q", "quit")] {
+                spans.push(Span::styled(
+                    format!(" {key} "),
+                    Style::default().fg(Color::Black).bg(Color::Gray),
+                ));
+                spans.push(Span::styled(format!(" {what}   "), Style::default().fg(IDLE)));
+            }
+            Line::from(spans)
+        }
     };
     frame.render_widget(Paragraph::new(line), area);
 }
 
+/// The handful of keys worth showing for the focused panel.
+fn panel_keys(panel: Panel) -> &'static [(&'static str, &'static str)] {
+    match panel {
+        Panel::Files => &[
+            ("space", "move"),
+            ("d", "revert"),
+            ("H", "history"),
+            ("u", "scan"),
+        ],
+        Panel::Changelists => &[
+            ("space", "move"),
+            ("c", "submit"),
+            ("n", "new"),
+            ("e", "describe"),
+            ("d", "delete"),
+        ],
+        Panel::History => &[("U", "undo"), ("enter", "diff")],
+        Panel::Diff => &[("enter", "fullscreen"), ("h/l", "scroll")],
+        Panel::Status => &[],
+    }
+}
+
+/// Every key, grouped by where it applies, in two columns.
 fn draw_help(frame: &mut Frame) {
-    let row = |keys: String, what: String| {
-        Line::from(vec![
-            Span::styled(format!("  {keys:<14}"), Style::default().fg(FOCUS)),
-            Span::raw(what),
-        ])
+    let panels: Vec<(String, &str)> = Panel::ORDER
+        .iter()
+        .map(|p| (p.number().to_string(), p.title()))
+        .collect();
+    let mut navigation: Vec<(&str, &str)> = vec![
+        ("j / k", "move"),
+        ("g / G", "first / last"),
+        ("Tab", "cycle panels"),
+        ("[ ]", "switch tab"),
+    ];
+    navigation.extend(panels.iter().map(|(n, t)| (n.as_str(), *t)));
+
+    let groups: [(&str, &[(&str, &str)]); 4] = [
+        ("Navigation", &navigation),
+        (
+            "Files",
+            &[
+                ("space", "move to / from the changelist"),
+                ("d", "revert, discarding local changes"),
+                ("h / l", "fold a directory"),
+                ("H", "revision history"),
+                ("u", "scan for unopened changes (slow)"),
+            ],
+        ),
+        (
+            "Changelists",
+            &[
+                ("n", "new"),
+                ("e", "edit the description"),
+                ("c", "submit"),
+                ("d", "delete an empty one"),
+                ("U", "undo a submitted change"),
+            ],
+        ),
+        (
+            "Diff and app",
+            &[
+                ("enter", "fullscreen the diff"),
+                ("h / l", "scroll sideways"),
+                ("r", "refresh"),
+                ("x", "the p4 command log"),
+                ("q", "quit"),
+            ],
+        ),
+    ];
+
+    // Two columns, so the sheet stays one screenful.
+    let column = |group: &(&str, &[(&str, &str)])| -> Vec<Line<'static>> {
+        let mut out = vec![Line::from(Span::styled(
+            group.0.to_owned(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ))];
+        out.extend(group.1.iter().map(|(key, what)| {
+            Line::from(vec![
+                Span::styled(format!("{key:<7}"), Style::default().fg(FOCUS)),
+                Span::raw((*what).to_owned()),
+            ])
+        }));
+        out
     };
 
-    let mut lines = vec![
-        row("j / k, ↓ / ↑".into(), "move".into()),
-        row("g / G".into(), "first / last".into()),
-        row("Tab / Shift-Tab".into(), "cycle panels".into()),
-        row("[ ]".into(), "switch tab within a panel".into()),
-        row("Enter".into(), "diff fullscreen (Esc to leave)".into()),
-        row(
-            "h / l, ← / →".into(),
-            "fold a directory, or scroll the diff".into(),
-        ),
-        row("Space".into(), "move a file in or out of the changelist".into()),
-        row("u".into(), "scan for untracked files (slow)".into()),
-        row("e".into(), "edit the changelist description".into()),
-        row("n".into(), "new changelist".into()),
-        row("c".into(), "submit the changelist".into()),
-        row("d".into(), "revert files, or delete an empty changelist".into()),
-        Line::raw(""),
-    ];
-    lines.extend(
-        Panel::ORDER
-            .iter()
-            .map(|p| row(p.number().to_string(), format!("focus {}", p.title()))),
-    );
-    lines.push(Line::raw(""));
-    lines.extend([
-        row("r".into(), "refresh".into()),
-        row("x".into(), "command log".into()),
-        row("H".into(), "history of the selected file".into()),
-        row("U".into(), "undo a submitted change".into()),
-        row("?".into(), "this help".into()),
-        row("q".into(), "quit".into()),
-    ]);
+    let left: Vec<Line> = column(&groups[0])
+        .into_iter()
+        .chain([Line::raw("")])
+        .chain(column(&groups[1]))
+        .collect();
+    let right: Vec<Line> = column(&groups[2])
+        .into_iter()
+        .chain([Line::raw("")])
+        .chain(column(&groups[3]))
+        .collect();
 
-    let height = lines.len() as u16 + 2;
-    overlay(frame, " Keys ", lines, 44, height);
+    let height = (left.len().max(right.len()) as u16 + 2).min(frame.area().height);
+    // Wide enough that the longest description is not clipped by a column.
+    let width = 80.min(frame.area().width);
+    let area = centered(frame.area(), width, height);
+
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(FOCUS))
+        .title(Span::styled(
+            " Keys ",
+            Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " x for the command log   Esc to close ",
+            Style::default().fg(IDLE),
+        ));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(inner);
+    frame.render_widget(Paragraph::new(left), left_area);
+    frame.render_widget(Paragraph::new(right), right_area);
 }
 
 fn draw_log(frame: &mut Frame, app: &App) {
