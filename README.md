@@ -7,7 +7,8 @@ changelists and their files in panels, and read diffs in the shell.
 
 You can sync, arrange, shelve, resolve and submit a task without dropping to the
 shell. What is still missing — chiefly a merge tool for conflicts `p4 resolve
--am` refuses — is in [ROADMAP.md](ROADMAP.md), in the order it is worth doing.
+-am` refuses — is tracked in
+[issues](https://github.com/linus-skold/lazyp4/issues).
 
 ## Install
 
@@ -263,8 +264,8 @@ p4 trust -y      # only for an ssl: port
 p4 login
 ```
 
-After that lazyp4 stands on its own. Closing that gap is on the
-[roadmap](ROADMAP.md).
+After that lazyp4 stands on its own. Closing that gap is
+[issue #1](https://github.com/linus-skold/lazyp4/issues/1).
 
 While it sits still, lazyp4 checks every five seconds whether `p4` has been used
 in another window, and reloads if it has.
@@ -420,3 +421,35 @@ cargo run -p p4 --example changes
 ```
 
 lists the pending and recent submitted changelists of the current workspace.
+
+## Where Perforce and git part company
+
+lazyp4 follows lazygit's shape, but copying it exactly would produce something
+wrong in four places. These are deliberate absences, not gaps.
+
+- **No partial staging.** lazygit's best feature is `Enter` on a file to stage
+  individual hunks or lines. Perforce opens a *whole file* or nothing. There is
+  no per-hunk equivalent and inventing one would misrepresent what the server
+  is about to receive.
+- **No local commits.** A pending changelist is not a commit; it becomes one
+  only on submit, and it goes straight to the server. So there is no
+  `push`/`pull` pair, no rebase, no squash, no amend of local history, and no
+  reflog to undo from.
+- **No cheap branch switching.** A stream switch resyncs the workspace
+  (`p4 switch`), which can move gigabytes. It cannot be a casual keystroke the
+  way `space` on a branch is in lazygit, so it sits behind a confirmation that
+  says so.
+- **Shelving is not stashing.** A shelf belongs to a changelist and lives on the
+  server. It is closer to a draft pull request than to `git stash`.
+
+For the same reason, these are not planned: interactive rebase, squash, fixup or
+reword of submitted history; per-hunk and per-line staging; a reflog-backed undo
+stack; and cherry-pick as a first-class verb — `p4 integrate` is a different
+operation with different consequences and should not be dressed up as one.
+
+## Contributing
+
+What is left to build is in
+[issues](https://github.com/linus-skold/lazyp4/issues), labelled by area:
+`ui` for the terminal interface, `p4-api` for the Perforce layer, and `build`
+for packaging and CI.

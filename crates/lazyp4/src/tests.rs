@@ -2243,10 +2243,17 @@ fn an_ignore_pattern_is_the_path_below_the_workspace_root() {
         ignore_entry("E:/ws/", ".p4ignore", "E:/ws/A.txt").unwrap().0,
         "E:/ws/.p4ignore"
     );
-    // P4IGNORE may name a path rather than a file.
-    assert_eq!(
-        ignore_entry("E:/ws", "D:/shared/ignore.txt", "E:/ws/A.txt").unwrap().0,
+    // P4IGNORE may name a path rather than a file. What counts as absolute is
+    // the platform's own business — a drive letter means nothing on Unix — so
+    // this asks with a path that is absolute wherever the test is running.
+    let elsewhere = if cfg!(windows) {
         "D:/shared/ignore.txt"
+    } else {
+        "/shared/ignore.txt"
+    };
+    assert_eq!(
+        ignore_entry("E:/ws", elsewhere, "E:/ws/A.txt").unwrap().0,
+        elsewhere
     );
     // Outside the workspace there is no pattern to write.
     assert!(ignore_entry("E:/ws", ".p4ignore", "C:/elsewhere/A.txt").is_none());
