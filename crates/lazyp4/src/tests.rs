@@ -684,6 +684,45 @@ fn revision(rev: u32, change: u32, desc: &str) -> p4::Revision {
 }
 
 #[test]
+fn shift_u_undoes_a_submitted_change_into_a_new_changelist() {
+    let mut app = app();
+    app.focus = Panel::History;
+    press(&mut app, KeyCode::Char('g'));
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('U'));
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Undo change 396?");
+    assert!(
+        confirm.lines.iter().any(|l| l.contains("Nothing is submitted")),
+        "the confirmation says the depot is untouched: {:?}",
+        confirm.lines
+    );
+
+    press(&mut app, KeyCode::Char('y'));
+    let Some(Request::UndoChange { change, root }) = app.last_request() else {
+        panic!("expected an undo");
+    };
+    assert_eq!(change, ChangeId::Number(396));
+    assert_eq!(root, "//darksim/main");
+}
+
+#[test]
+fn a_pending_change_cannot_be_undone() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('U'));
+    assert!(app.confirm.is_none());
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("submitted change")));
+}
+
+#[test]
 fn shift_h_shows_the_history_of_the_selected_file() {
     let mut app = app();
     app.focus = Panel::Files;

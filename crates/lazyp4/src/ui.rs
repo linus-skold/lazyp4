@@ -724,6 +724,7 @@ fn draw_help(frame: &mut Frame) {
         row("r".into(), "refresh".into()),
         row("x".into(), "command log".into()),
         row("H".into(), "history of the selected file".into()),
+        row("U".into(), "undo a submitted change".into()),
         row("?".into(), "this help".into()),
         row("q".into(), "quit".into()),
     ]);

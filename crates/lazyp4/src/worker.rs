@@ -88,6 +88,11 @@ pub enum Request {
     LoadHistory {
         depot_path: String,
     },
+    /// Open a reversal of a submitted change in a changelist of its own.
+    UndoChange {
+        change: ChangeId,
+        root: String,
+    },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
     MoveFiles {
@@ -368,6 +373,27 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 let _ = events.send(Event::Log(format!("change -o {change} | change -i")));
                 if let Err(e) = both.untagged.set_description(change, &description) {
                     let _ = events.send(Event::Error(format!("change: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::UndoChange { change, root } => {
+                // The reversal needs somewhere to live, and putting it in its
+                // own changelist keeps it reviewable before it is submitted.
+                let _ = events.send(Event::Log(format!("change -i (undo of {change})")));
+                match both
+                    .untagged
+                    .create_change(&format!("Undo of change {change}"))
+                {
+                    Ok(into) => {
+                        let spec = format!("{root}/...@={change}");
+                        let _ = events.send(Event::Log(format!("undo -c {into} {spec}")));
+                        if let Err(e) = both.tagged.undo(into, &spec) {
+                            let _ = events.send(Event::Error(format!("undo: {e}")));
+                        }
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("change: {e}")));
+                    }
                 }
                 let _ = events.send(Event::Changed);
             }

@@ -315,6 +315,17 @@ impl Client {
         self.save_change_spec(&crate::spec::set_field(&form, "Description", description))
     }
 
+    /// Open files that reverse a submitted change, into `into`.
+    ///
+    /// `spec` is a path with a revision range, e.g. `//depot/main/...@=412`
+    /// for everything one changelist submitted. Nothing reaches the depot
+    /// until the resulting changelist is submitted.
+    pub fn undo(&mut self, into: ChangeId, spec: &str) -> Result<()> {
+        let id = into.to_string();
+        self.run("undo", &["-c", &id, spec])?;
+        Ok(())
+    }
+
     /// Submit a pending changelist to the depot.
     ///
     /// Irreversible once it succeeds. It fails if any file needs resolving,

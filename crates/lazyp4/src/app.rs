@@ -607,6 +607,7 @@ impl App {
             KeyCode::Char('d') if self.focus == Panel::Files => self.revert_selected(),
             KeyCode::Char('c') => self.submit_changelist(),
             KeyCode::Char('H') => self.show_history(),
+            KeyCode::Char('U') => self.undo_change(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -694,6 +695,39 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(Vec::new()));
+    }
+
+    /// Open a reversal of the selected submitted change.
+    ///
+    /// Nothing reaches the depot: the reversal lands in a pending changelist
+    /// to be reviewed and submitted like any other work.
+    fn undo_change(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if cl.status != ChangeStatus::Submitted {
+            self.error = Some("only a submitted change can be undone".into());
+            return;
+        }
+        let root = self.depot_root();
+        if root.is_empty() {
+            self.error = Some("no depot root to undo within".into());
+            return;
+        }
+
+        self.ask(
+            format!("Undo change {}?", cl.id),
+            vec![
+                cl.summary().to_owned(),
+                String::new(),
+                format!("Opens the reversal of {root}/... in a new changelist."),
+                "Nothing is submitted until you submit it.".to_owned(),
+            ],
+            Request::UndoChange {
+                change: cl.id,
+                root,
+            },
+        );
     }
 
     /// Show every revision of the file under the cursor.

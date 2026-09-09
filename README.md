@@ -166,6 +166,8 @@ the changelist is left exactly as the server sent it.
 | `u` | scan for files that are changed but not open (slow) |
 | `Enter` | fold a directory, else give the diff the whole window (`Esc` to leave) |
 | `r` | refresh |
+| `H` | revision history of the selected file |
+| `U` | undo a submitted change into a new changelist |
 | `x` | command log — every P4API call made |
 | `?` | help |
 | `q` | quit |

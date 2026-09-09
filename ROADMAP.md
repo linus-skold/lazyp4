@@ -128,14 +128,15 @@ day-to-day work — but there is no way to see or change stream.
 
 ## F. History
 
-The History panel lists submitted changelists but does nothing with them.
+Mostly done. Selecting a submitted changelist already points Files and Diff at
+it, `H` shows a file's revisions, and `U` undoes a submitted change into a new
+pending changelist.
 
-- `Enter` on a submitted changelist already shows its diff; it should also offer
-  its files.
-- File history: `p4 filelog` — already implemented in the `p4` crate, unused.
-- Undo a submitted change: `p4 undo -c <new-cl> <file>#<rev>` (server 2019.1+;
-  yours is 2024.2). This is the nearest thing to lazygit's revert.
-- Annotate: `p4 annotate` is the blame equivalent.
+What is left:
+
+- **Annotate.** `p4 annotate` is the blame equivalent and has no UI.
+- Undo covers a whole changelist. Undoing a single file revision from the `H`
+  panel would be the finer-grained version.
 
 ## G. Polish
 
