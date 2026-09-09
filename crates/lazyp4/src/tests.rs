@@ -626,6 +626,66 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
 }
 
 #[test]
+fn d_in_files_reverts_after_confirming_and_naming_the_files() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('d'));
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Revert 1 file(s)?");
+    assert!(
+        confirm.lines.iter().any(|l| l.contains("AGENTS.md")),
+        "the confirmation names what is at stake: {:?}",
+        confirm.lines
+    );
+    assert!(confirm.lines.iter().any(|l| l.contains("will be lost")));
+    assert!(app.last_request().is_none(), "nothing happens until y");
+
+    press(&mut app, KeyCode::Char('y'));
+    let Some(Request::RevertFiles { files }) = app.last_request() else {
+        panic!("expected a revert");
+    };
+    assert_eq!(files[0].depot_path, "//darksim/main/AGENTS.md");
+}
+
+#[test]
+fn reverting_a_directory_takes_everything_under_it() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    app.last_request();
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('j')); // Actors/
+
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('y'));
+
+    let Some(Request::RevertFiles { files }) = app.last_request() else {
+        panic!("expected a revert");
+    };
+    assert_eq!(files.len(), 2);
+}
+
+#[test]
+fn a_file_that_is_not_open_has_nothing_to_revert() {
+    let mut app = app();
+    app.files.clear();
+    app.loose_files = vec![unopened("//darksim/main/New.cpp", FileAction::Add)];
+    app.file_sel = 0;
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('d'));
+
+    assert!(app.confirm.is_none());
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("not open")));
+}
+
+#[test]
 fn d_deletes_an_empty_changelist_after_confirming() {
     let mut app = app();
     app.focus = Panel::Changelists;

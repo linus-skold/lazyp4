@@ -315,6 +315,20 @@ impl Client {
         self.save_change_spec(&crate::spec::set_field(&form, "Description", description))
     }
 
+    /// Throw away the local changes to open files and close them.
+    ///
+    /// Irreversible: the workspace copy of an edited file is overwritten with
+    /// the depot's, and a file opened for add is left on disk but untracked.
+    /// No changelist is named because a file can only be open once per
+    /// workspace, so its path is unambiguous.
+    pub fn revert(&mut self, paths: &[&str]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        self.run("revert", paths)?;
+        Ok(())
+    }
+
     /// Move already-open files into another changelist.
     ///
     /// `ChangeId::Default` moves them back out of a numbered changelist.

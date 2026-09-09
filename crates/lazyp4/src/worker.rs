@@ -79,6 +79,9 @@ pub enum Request {
     DeleteChange {
         change: ChangeId,
     },
+    RevertFiles {
+        files: Vec<FileEntry>,
+    },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
     MoveFiles {
@@ -355,6 +358,14 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 let _ = events.send(Event::Log(format!("change -o {change} | change -i")));
                 if let Err(e) = both.untagged.set_description(change, &description) {
                     let _ = events.send(Event::Error(format!("change: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::RevertFiles { files } => {
+                let paths: Vec<&str> = files.iter().map(|f| f.command_path()).collect();
+                let _ = events.send(Event::Log(format!("revert ({} files)", paths.len())));
+                if let Err(e) = p4.revert(&paths) {
+                    let _ = events.send(Event::Error(format!("revert: {e}")));
                 }
                 let _ = events.send(Event::Changed);
             }

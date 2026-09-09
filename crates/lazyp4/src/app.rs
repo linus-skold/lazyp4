@@ -575,6 +575,7 @@ impl App {
             KeyCode::Char('e') => self.edit_description(),
             KeyCode::Char('n') => self.new_changelist(),
             KeyCode::Char('d') if self.focus == Panel::Changelists => self.delete_changelist(),
+            KeyCode::Char('d') if self.focus == Panel::Files => self.revert_selected(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -662,6 +663,56 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(Vec::new()));
+    }
+
+    /// Throw away the local changes to the selected file, or to everything
+    /// under the selected directory.
+    fn revert_selected(&mut self) {
+        let files = self.selected_files();
+        if files.is_empty() {
+            return;
+        }
+        if self.selected_change().is_some_and(|cl| cl.status == ChangeStatus::Submitted) {
+            self.error = Some("a submitted changelist cannot be reverted".into());
+            return;
+        }
+
+        // Reverting means "close the open file"; a file the scan found is not
+        // open, so there is nothing for Perforce to close.
+        let (open, unopened): (Vec<FileEntry>, Vec<FileEntry>) =
+            files.into_iter().partition(|f| f.opened);
+        if open.is_empty() {
+            self.error = Some(format!(
+                "{} file(s) are not open — nothing to revert",
+                unopened.len()
+            ));
+            return;
+        }
+
+        let mut lines: Vec<String> = open
+            .iter()
+            .map(|f| {
+                format!(
+                    "{} {}",
+                    f.action.code(),
+                    tree::relative(&f.depot_path, &self.depot_root())
+                )
+            })
+            .collect();
+        if !unopened.is_empty() {
+            lines.push(format!(
+                "({} not open, left alone)",
+                unopened.len()
+            ));
+        }
+        lines.push(String::new());
+        lines.push("Local changes to these files will be lost.".to_owned());
+
+        self.ask(
+            format!("Revert {} file(s)?", open.len()),
+            lines,
+            Request::RevertFiles { files: open },
+        );
     }
 
     /// Delete the selected changelist, which Perforce allows only once it is
