@@ -8,7 +8,7 @@ use ratatui::Frame;
 
 use p4::{Changelist, FileAction};
 
-use crate::app::{change_marker, App, ChangeTab, Destination, FileRow, Modal, Panel, Picker};
+use crate::app::{change_marker, App, ChangeTab, Confirm, Destination, FileRow, Modal, Panel, Picker};
 use crate::diffview::{self, Row, RowKind};
 use crate::editor::Editor;
 use crate::worker::FileEntry;
@@ -60,6 +60,49 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(editor) = &app.editor {
         draw_editor(frame, editor);
     }
+    if let Some(confirm) = &app.confirm {
+        draw_confirm(frame, confirm);
+    }
+}
+
+fn draw_confirm(frame: &mut Frame, confirm: &Confirm) {
+    // Long enough to read, but capped: a confirmation nobody can take in is
+    // not a confirmation.
+    const MOST: usize = 12;
+    let shown = confirm.lines.len().min(MOST);
+    let mut lines: Vec<Line> = confirm.lines[..shown]
+        .iter()
+        .map(|text| Line::from(Span::raw(format!("  {text}"))))
+        .collect();
+    if confirm.lines.len() > shown {
+        lines.push(Line::from(Span::styled(
+            format!("  … and {} more", confirm.lines.len() - shown),
+            Style::default().fg(IDLE),
+        )));
+    }
+
+    let width = frame.area().width.saturating_sub(10).min(76).max(30);
+    let height = (lines.len() as u16 + 3).min(frame.area().height);
+    let area = centered(frame.area(), width, height);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Red))
+                .title(Span::styled(
+                    format!(" {} ", confirm.title),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ))
+                // Naming the one key that proceeds, rather than offering a
+                // default that could be taken by a stray Enter.
+                .title_bottom(Span::styled(
+                    " y to confirm   any other key cancels ",
+                    Style::default().fg(IDLE),
+                )),
+        ),
+        area,
+    );
 }
 
 fn draw_picker(frame: &mut Frame, picker: &Picker) {
@@ -615,6 +658,7 @@ fn draw_help(frame: &mut Frame) {
         row("u".into(), "scan for untracked files (slow)".into()),
         row("e".into(), "edit the changelist description".into()),
         row("n".into(), "new changelist".into()),
+        row("d".into(), "delete an empty changelist".into()),
         Line::raw(""),
     ];
     lines.extend(

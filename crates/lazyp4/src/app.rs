@@ -145,6 +145,17 @@ pub struct Picker {
     pub sel: usize,
 }
 
+/// A question that must be answered before something irreversible happens.
+///
+/// There is no default answer: only `y` goes ahead, and any other key backs
+/// out.
+pub struct Confirm {
+    pub title: String,
+    /// What is about to happen, and to what.
+    pub lines: Vec<String>,
+    request: Request,
+}
+
 /// What the open editor is for.
 enum Editing {
     /// Rewrite an existing changelist's description.
@@ -212,6 +223,8 @@ pub struct App {
     editing: Option<Editing>,
     /// Open changelist picker, if any.
     pub picker: Option<Picker>,
+    /// Pending confirmation, if any.
+    pub confirm: Option<Confirm>,
 
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
@@ -248,6 +261,7 @@ impl App {
             editor: None,
             editing: None,
             picker: None,
+            confirm: None,
             diffs: Vec::new(),
             diffs_for: None,
             diff_scroll: 0,
@@ -516,6 +530,17 @@ impl App {
             return;
         }
 
+        // Only `y` goes ahead. Anything else — including a stray keystroke that
+        // means something elsewhere — backs out.
+        if let Some(confirm) = self.confirm.take() {
+            if key.code == KeyCode::Char('y') {
+                self.busy = true;
+                self.error = None;
+                self.worker.send(confirm.request);
+            }
+            return;
+        }
+
         if self.picker.is_some() {
             self.pick_key(key.code);
             return;
@@ -549,6 +574,7 @@ impl App {
             }
             KeyCode::Char('e') => self.edit_description(),
             KeyCode::Char('n') => self.new_changelist(),
+            KeyCode::Char('d') if self.focus == Panel::Changelists => self.delete_changelist(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -636,6 +662,48 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(Vec::new()));
+    }
+
+    /// Delete the selected changelist, which Perforce allows only once it is
+    /// empty.
+    fn delete_changelist(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if cl.id == ChangeId::Default {
+            self.error = Some("the default changelist cannot be deleted".into());
+            return;
+        }
+        if cl.status == ChangeStatus::Submitted {
+            self.error = Some("a submitted changelist cannot be deleted".into());
+            return;
+        }
+        // Only trustworthy for the changelist whose files we have actually
+        // loaded; otherwise the server refuses and says so.
+        if self.files_for == Some(cl.id) && !self.files.is_empty() {
+            self.error = Some(format!(
+                "changelist {} still holds {} file(s) — move or revert them first",
+                cl.id,
+                self.files.len()
+            ));
+            return;
+        }
+
+        self.ask(
+            format!("Delete changelist {}?", cl.id),
+            vec![cl.summary().to_owned()],
+            Request::DeleteChange { change: cl.id },
+        );
+    }
+
+    /// Put a question up before doing something that cannot be undone.
+    fn ask(&mut self, title: String, lines: Vec<String>, request: Request) {
+        self.error = None;
+        self.confirm = Some(Confirm {
+            title,
+            lines,
+            request,
+        });
     }
 
     /// Open the description of the selected changelist for editing.

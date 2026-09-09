@@ -76,6 +76,9 @@ pub enum Request {
         description: String,
         files: Vec<FileEntry>,
     },
+    DeleteChange {
+        change: ChangeId,
+    },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
     MoveFiles {
@@ -352,6 +355,13 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 let _ = events.send(Event::Log(format!("change -o {change} | change -i")));
                 if let Err(e) = both.untagged.set_description(change, &description) {
                     let _ = events.send(Event::Error(format!("change: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::DeleteChange { change } => {
+                let _ = events.send(Event::Log(format!("change -d {change}")));
+                if let Err(e) = p4.delete_change(change) {
+                    let _ = events.send(Event::Error(format!("change -d: {e}")));
                 }
                 let _ = events.send(Event::Changed);
             }

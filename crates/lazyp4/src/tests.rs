@@ -626,6 +626,81 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
 }
 
 #[test]
+fn d_deletes_an_empty_changelist_after_confirming() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    // 308 has no files loaded, so nothing is known to be in the way.
+    press(&mut app, KeyCode::Char('j'));
+    app.files.clear();
+    app.files_for = None;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('d'));
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Delete changelist 308?");
+    assert!(app.last_request().is_none(), "nothing happens until y");
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("y to confirm"), "{out}");
+
+    press(&mut app, KeyCode::Char('y'));
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::DeleteChange { change }) if change == ChangeId::Number(308)
+    ));
+}
+
+#[test]
+fn any_key_but_y_cancels_a_confirmation() {
+    for key in [KeyCode::Char('n'), KeyCode::Esc, KeyCode::Enter] {
+        let mut app = app();
+        app.focus = Panel::Changelists;
+        press(&mut app, KeyCode::Char('j'));
+        app.files.clear();
+        app.files_for = None;
+        press(&mut app, KeyCode::Char('d'));
+        app.last_request();
+
+        press(&mut app, key);
+        assert!(app.confirm.is_none(), "{key:?} should close it");
+        assert!(app.last_request().is_none(), "{key:?} must not confirm");
+    }
+}
+
+#[test]
+fn a_changelist_holding_files_is_not_offered_for_deletion() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.last_request();
+    // 395's files are loaded by the fixture.
+    press(&mut app, KeyCode::Char('d'));
+
+    assert!(app.confirm.is_none());
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("move or revert")));
+}
+
+#[test]
+fn the_default_and_submitted_changelists_cannot_be_deleted() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Char('d'));
+    assert!(app.confirm.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("default")));
+
+    app.focus = Panel::History;
+    press(&mut app, KeyCode::Char('g'));
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('d'));
+    assert!(app.confirm.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("submitted")));
+}
+
+#[test]
 fn n_creates_an_empty_changelist() {
     let mut app = app();
     press(&mut app, KeyCode::Char('n'));
