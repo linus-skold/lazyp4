@@ -130,6 +130,29 @@ impl FileRow<'_> {
     }
 }
 
+/// Where a picked set of files should go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Destination {
+    Existing(ChangeId, String),
+    /// Make one first, asking for a description.
+    New,
+}
+
+/// Choosing a changelist to move files into.
+pub struct Picker {
+    pub files: Vec<FileEntry>,
+    pub options: Vec<Destination>,
+    pub sel: usize,
+}
+
+/// What the open editor is for.
+enum Editing {
+    /// Rewrite an existing changelist's description.
+    Description(ChangeId),
+    /// Describe a changelist that does not exist yet, then move these into it.
+    NewChange(Vec<FileEntry>),
+}
+
 /// Which full-screen overlay is open, if any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
@@ -186,6 +209,9 @@ pub struct App {
 
     /// Open description editor, if any. Takes every keystroke while it lives.
     pub editor: Option<Editor>,
+    editing: Option<Editing>,
+    /// Open changelist picker, if any.
+    pub picker: Option<Picker>,
 
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
@@ -220,6 +246,8 @@ impl App {
             scanning: false,
             collapsed: HashSet::new(),
             editor: None,
+            editing: None,
+            picker: None,
             diffs: Vec::new(),
             diffs_for: None,
             diff_scroll: 0,
@@ -479,9 +507,17 @@ impl App {
         if let Some(editor) = &mut self.editor {
             match editor.handle(key) {
                 Outcome::Continue => {}
-                Outcome::Cancel => self.editor = None,
-                Outcome::Save => self.save_description(),
+                Outcome::Cancel => {
+                    self.editor = None;
+                    self.editing = None;
+                }
+                Outcome::Save => self.save_editor(),
             }
+            return;
+        }
+
+        if self.picker.is_some() {
+            self.pick_key(key.code);
             return;
         }
 
@@ -613,9 +649,10 @@ impl App {
             format!("Description of {}", cl.id),
             &cl.description,
         ));
+        self.editing = Some(Editing::Description(cl.id));
     }
 
-    fn save_description(&mut self) {
+    fn save_editor(&mut self) {
         let Some(editor) = &self.editor else {
             return;
         };
@@ -625,18 +662,20 @@ impl App {
             return;
         }
         let description = editor.text();
-        let Some(cl) = self.selected_change() else {
-            self.editor = None;
-            return;
+
+        let request = match self.editing.take() {
+            Some(Editing::Description(change)) => Request::SetDescription {
+                change,
+                description,
+            },
+            Some(Editing::NewChange(files)) => Request::CreateChange { description, files },
+            None => return,
         };
 
         self.editor = None;
         self.busy = true;
         self.error = None;
-        self.worker.send(Request::SetDescription {
-            change: cl.id,
-            description,
-        });
+        self.worker.send(request);
     }
 
     /// Move the file under the cursor across the divider.
@@ -706,9 +745,10 @@ impl App {
             self.error = Some("a submitted changelist cannot be changed".into());
             return;
         }
+        // Looking at the default changelist, there is no second group and so no
+        // implied destination: ask which changelist to move into.
         if cl.id == ChangeId::Default {
-            self.error =
-                Some("select a numbered changelist to move files into".into());
+            self.open_picker(files);
             return;
         }
 
@@ -719,6 +759,64 @@ impl App {
             change: target,
             files,
         });
+    }
+
+    /// Offer the numbered changelists these files could move into, plus the
+    /// option of a new one.
+    fn open_picker(&mut self, files: Vec<FileEntry>) {
+        let mut options: Vec<Destination> = self
+            .pending
+            .iter()
+            .filter(|cl| self.is_mine(cl) && cl.id != ChangeId::Default)
+            .map(|cl| Destination::Existing(cl.id, cl.summary().to_owned()))
+            .collect();
+        options.push(Destination::New);
+
+        self.error = None;
+        self.picker = Some(Picker {
+            files,
+            options,
+            sel: 0,
+        });
+    }
+
+    fn pick_key(&mut self, code: KeyCode) {
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => self.picker = None,
+            KeyCode::Char('j') | KeyCode::Down => {
+                picker.sel = (picker.sel + 1).min(picker.options.len() - 1);
+            }
+            KeyCode::Char('k') | KeyCode::Up => picker.sel = picker.sel.saturating_sub(1),
+            KeyCode::Char('g') | KeyCode::Home => picker.sel = 0,
+            KeyCode::Char('G') | KeyCode::End => picker.sel = picker.options.len() - 1,
+            KeyCode::Enter | KeyCode::Char(' ') => self.confirm_pick(),
+            _ => {}
+        }
+    }
+
+    fn confirm_pick(&mut self) {
+        let Some(picker) = self.picker.take() else {
+            return;
+        };
+        match picker.options.get(picker.sel).cloned() {
+            Some(Destination::Existing(change, _)) => {
+                self.busy = true;
+                self.worker.send(Request::MoveFiles {
+                    change,
+                    files: picker.files,
+                });
+            }
+            Some(Destination::New) => {
+                // A changelist cannot exist without a description, so ask for
+                // one before creating anything.
+                self.editor = Some(Editor::new("Description of the new changelist", ""));
+                self.editing = Some(Editing::NewChange(picker.files));
+            }
+            None => {}
+        }
     }
 
     fn switch_tab(&mut self, by: isize) {

@@ -83,6 +83,21 @@ M    README.md
 directory moves every file beneath it, which is the quickest way to move a
 whole feature's worth of files at once.
 
+With the **default** changelist selected there is no second group, and so no
+implied destination. `Space` there asks where the files should go:
+
+```text
+┌ Move 1 file to ──────────────────────────┐
+│     395 # Do not submit                  │
+│     308 Interaction                      │
+│     new  create a changelist…            │
+└ Enter choose   Esc cancel ───────────────┘
+```
+
+Only your own changelists are offered. Choosing `new` asks for a description
+first — Perforce will not create a changelist without one — and then creates it
+and moves the files in one step.
+
 `u` scans the workspace for files that differ from the depot without being
 open, and adds them to the lower group. It walks the whole workspace and takes
 tens of seconds on a large tree, so it only runs when you ask.

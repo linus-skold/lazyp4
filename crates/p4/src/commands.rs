@@ -8,6 +8,30 @@ use crate::error::{Error, Result};
 use crate::model::*;
 use crate::record::RecordExt;
 
+/// The number out of `Change 398 created.`
+fn parse_created(message: &str) -> Option<u32> {
+    let rest = message.strip_prefix("Change ")?;
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_created;
+
+    #[test]
+    fn reads_the_number_out_of_the_reply() {
+        assert_eq!(parse_created("Change 398 created."), Some(398));
+        assert_eq!(parse_created("Change 398 created fixing job000123."), Some(398));
+    }
+
+    #[test]
+    fn ignores_anything_else_the_server_says() {
+        assert_eq!(parse_created("Change 398 updated."), Some(398));
+        assert_eq!(parse_created("//depot/f.txt#1 - opened for add"), None);
+        assert_eq!(parse_created("Change default renamed"), None);
+    }
+}
+
 /// Which changelists `changes` should list.
 #[derive(Debug, Clone, Default)]
 pub struct ChangeFilter {
@@ -247,6 +271,33 @@ impl Client {
     pub fn change_spec(&mut self, change: ChangeId) -> Result<String> {
         let id = change.to_string();
         Ok(self.run("change", &["-o", &id])?.merged_text())
+    }
+
+    /// Create an empty pending changelist and return its number.
+    ///
+    /// The form `p4 change -o` hands back for a new changelist already lists
+    /// every file open in the default changelist, and saving it as-is would
+    /// sweep all of them in. `Files` is cleared so the caller moves exactly
+    /// what it means to.
+    pub fn create_change(&mut self, description: &str) -> Result<ChangeId> {
+        let form = self.run("change", &["-o"])?.merged_text();
+        let form = crate::spec::set_field(&form, "Description", description);
+        let form = crate::spec::set_field(&form, "Files", "");
+
+        let out = self.run_with_input("change", &["-i"], &form)?;
+        // The server answers "Change 398 created."
+        out.info
+            .iter()
+            .find_map(|line| parse_created(&line.text))
+            .map(ChangeId::Number)
+            .ok_or_else(|| Error::parse("no changelist number in the reply"))
+    }
+
+    /// Delete an empty pending changelist.
+    pub fn delete_change(&mut self, change: ChangeId) -> Result<()> {
+        let id = change.to_string();
+        self.run("change", &["-d", &id])?;
+        Ok(())
     }
 
     /// Write a changelist spec form back.

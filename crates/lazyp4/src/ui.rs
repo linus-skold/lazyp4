@@ -8,7 +8,7 @@ use ratatui::Frame;
 
 use p4::{Changelist, FileAction};
 
-use crate::app::{change_marker, App, ChangeTab, FileRow, Modal, Panel};
+use crate::app::{change_marker, App, ChangeTab, Destination, FileRow, Modal, Panel, Picker};
 use crate::diffview::{self, Row, RowKind};
 use crate::editor::Editor;
 use crate::worker::FileEntry;
@@ -53,10 +53,62 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::Log => draw_log(frame, app),
     }
 
-    // Drawn last so it sits above any overlay.
+    // Drawn last so they sit above any overlay.
+    if let Some(picker) = &app.picker {
+        draw_picker(frame, picker);
+    }
     if let Some(editor) = &app.editor {
         draw_editor(frame, editor);
     }
+}
+
+fn draw_picker(frame: &mut Frame, picker: &Picker) {
+    let width = frame.area().width.saturating_sub(10).min(64).max(30);
+    let height = (picker.options.len() as u16 + 3).min(frame.area().height);
+    let area = centered(frame.area(), width, height);
+
+    frame.render_widget(Clear, area);
+    let files = picker.files.len();
+    let block = Block::bordered()
+        .border_style(Style::default().fg(FOCUS))
+        .title(Span::styled(
+            format!(
+                " Move {files} file{} to ",
+                if files == 1 { "" } else { "s" }
+            ),
+            Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " Enter choose   Esc cancel ",
+            Style::default().fg(IDLE),
+        ));
+
+    let items: Vec<ListItem> = picker
+        .options
+        .iter()
+        .map(|option| match option {
+            Destination::Existing(id, summary) => ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{:>8} ", id.to_string()),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw(summary.clone()),
+            ])),
+            Destination::New => ListItem::new(Line::from(Span::styled(
+                "     new  create a changelist…",
+                Style::default().fg(Color::Green),
+            ))),
+        })
+        .collect();
+
+    let mut state = ListState::default().with_selected(Some(picker.sel));
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(block)
+            .highlight_style(selection_style(true)),
+        area,
+        &mut state,
+    );
 }
 
 fn draw_editor(frame: &mut Frame, editor: &Editor) {

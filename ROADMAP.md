@@ -46,7 +46,7 @@ The core gap: you can arrange work but not finish it. Highest priority.
 
 | Need | Command | UI |
 | --- | --- | --- |
-| Create a changelist | `p4 change -i` with `Change: new` | `n` in the Changelists panel: description popup, then create empty |
+| ~~Create a changelist~~ | `p4 change -i` with `Change: new` | Done, via the move picker. Still wants an `n` key in the Changelists panel for an empty one |
 | Submit | `p4 submit -c <cl>` | `S` (or `c`, matching lazygit's commit) with a confirmation showing every file |
 | Delete an empty changelist | `p4 change -d <cl>` | `d`, refusing while files remain |
 | Revert files | `p4 revert -c <cl> <files>` | `d` in Files, always confirmed — this is unrecoverable |
@@ -73,9 +73,8 @@ The current `Space`-moves-one-file loop is the weakest part of the app.
    a selection, not just the cursor line.
 2. **Move all.** lazygit's `a` stages everything. `p4 reopen -c <cl> //...` does
    it in one command. `Space` on a directory already covers the common case.
-3. **A target that does not exist yet.** Right now `Space` from the default
-   group requires a numbered changelist to already be selected. Creating one on
-   the spot is the common case: check out files, then decide where they go.
+3. ~~**A target that does not exist yet.**~~ Done — `Space` on the default
+   changelist offers a picker, including a new changelist created on the spot.
 4. ~~**Shorter paths.**~~ Done — the panel is a folding tree rooted at the
    stream.
 5. **Discard.** There is no way to undo an `add` or throw away a local edit —

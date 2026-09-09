@@ -70,6 +70,12 @@ pub enum Request {
         change: ChangeId,
         description: String,
     },
+    /// Create a changelist and move `files` into it, in one step so the UI
+    /// never has to hold a half-made changelist.
+    CreateChange {
+        description: String,
+        files: Vec<FileEntry>,
+    },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
     MoveFiles {
@@ -346,6 +352,18 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 let _ = events.send(Event::Log(format!("change -o {change} | change -i")));
                 if let Err(e) = both.untagged.set_description(change, &description) {
                     let _ = events.send(Event::Error(format!("change: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::CreateChange { description, files } => {
+                let _ = events.send(Event::Log("change -i (new)".into()));
+                match both.untagged.create_change(&description) {
+                    Ok(change) => {
+                        move_files(&mut both.tagged, &events, change, &files);
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("change: {e}")));
+                    }
                 }
                 let _ = events.send(Event::Changed);
             }

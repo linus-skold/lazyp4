@@ -8,7 +8,7 @@ use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, ChangeTab, FileRow, Modal, Panel};
+use crate::app::{App, ChangeTab, Destination, FileRow, Modal, Panel};
 use crate::ui;
 use crate::worker::{Event, FileEntry, Request, Worker};
 
@@ -529,10 +529,9 @@ fn space_pulls_a_default_file_into_the_selected_changelist() {
     assert_eq!(files[0].depot_path, "//darksim/main/Config/DefaultEngine.ini");
 }
 
-#[test]
-fn space_refuses_when_there_is_no_numbered_changelist_to_move_into() {
+/// Sitting on the default changelist, where a move has no implied destination.
+fn on_default() -> App {
     let mut app = app();
-    // Back to the default changelist, where both ends of the move are the same.
     app.focus = Panel::Changelists;
     press(&mut app, KeyCode::Char('g'));
     app.handle(Event::Files {
@@ -540,16 +539,112 @@ fn space_refuses_when_there_is_no_numbered_changelist_to_move_into() {
         files: vec![file("//darksim/main/Loose.cpp", FileAction::Edit, false)],
         default_files: Vec::new(),
     });
-
     app.focus = Panel::Files;
     app.last_request(); // discard the setup traffic
+    app
+}
+
+#[test]
+fn space_on_the_default_changelist_asks_where_to_move() {
+    let mut app = on_default();
     press(&mut app, KeyCode::Char(' '));
 
+    let picker = app.picker.as_ref().expect("a picker should open");
+    assert_eq!(picker.files.len(), 1);
+    // Our numbered changelists, then the option of a new one.
+    assert!(matches!(picker.options[0], Destination::Existing(id, _) if id == ChangeId::Number(395)));
+    assert_eq!(picker.options.last(), Some(&Destination::New));
+    assert!(
+        !picker.options.iter().any(
+            |o| matches!(o, Destination::Existing(id, _) if *id == ChangeId::Default)
+        ),
+        "the default changelist is where the files already are"
+    );
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("Move 1 file to"), "{out}");
+    assert!(out.contains("create a changelist"), "{out}");
+}
+
+#[test]
+fn the_picker_offers_only_our_own_changelists() {
+    let mut app = on_default();
+    press(&mut app, KeyCode::Char(' '));
+
+    let picker = app.picker.as_ref().unwrap();
+    let ids: Vec<String> = picker
+        .options
+        .iter()
+        .filter_map(|o| match o {
+            Destination::Existing(id, _) => Some(id.to_string()),
+            Destination::New => None,
+        })
+        .collect();
+    // 106 belongs to another user; 166 is ours even though it is shelved.
+    assert_eq!(ids, ["395", "308", "166", "117"]);
+}
+
+#[test]
+fn choosing_an_existing_changelist_moves_the_files() {
+    let mut app = on_default();
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('j')); // 308
+    press(&mut app, KeyCode::Enter);
+
+    assert!(app.picker.is_none());
+    let Some(Request::MoveFiles { change, files }) = app.last_request() else {
+        panic!("expected a move");
+    };
+    assert_eq!(change, ChangeId::Number(308));
+    assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
+}
+
+#[test]
+fn choosing_new_asks_for_a_description_before_creating_anything() {
+    let mut app = on_default();
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('G')); // the "new" row
+    press(&mut app, KeyCode::Enter);
+
+    assert!(app.picker.is_none());
+    let editor = app.editor.as_ref().expect("a description is required first");
+    assert_eq!(editor.title, "Description of the new changelist");
+    assert_eq!(editor.text(), "", "a new changelist starts empty");
+    assert!(
+        app.last_request().is_none(),
+        "nothing is created until the description is given"
+    );
+
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Enter);
+
+    let Some(Request::CreateChange { description, files }) = app.last_request() else {
+        panic!("expected a create");
+    };
+    assert_eq!(description, "x");
+    assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
+}
+
+#[test]
+fn esc_closes_the_picker_without_moving_anything() {
+    let mut app = on_default();
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Esc);
+
+    assert!(app.picker.is_none());
     assert!(app.last_request().is_none());
-    assert!(app
-        .error
-        .as_deref()
-        .is_some_and(|e| e.contains("numbered changelist")));
+}
+
+#[test]
+fn abandoning_the_new_changelist_description_creates_nothing() {
+    let mut app = on_default();
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('G'));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Esc);
+
+    assert!(app.editor.is_none());
+    assert!(app.last_request().is_none());
 }
 
 #[test]
@@ -893,6 +988,10 @@ fn key_release_events_are_ignored() {
 #[test]
 #[ignore = "prints the layout for inspection"]
 fn preview() {
+    let mut picking = on_default();
+    press(&mut picking, KeyCode::Char(' '));
+    println!("{}\n", render(&picking, 100, 22));
+
     let mut app = nested();
     app.loose_files = vec![
         file("//darksim/main/Config/DefaultEngine.ini", FileAction::Edit, false),
