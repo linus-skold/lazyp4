@@ -6,25 +6,23 @@
 
 use similar::{ChangeTag, TextDiff};
 
-/// Columns a tab advances to. Source under Perforce is very often
-/// tab-indented, and a terminal draws a tab as one cell or none at all, so
-/// nested indentation collapses unless it is expanded here.
-const TAB_WIDTH: usize = 4;
-
 /// Replace tabs with spaces up to the next tab stop.
 ///
-/// Position-aware rather than a flat substitution: a tab is "advance to the
-/// next multiple of [`TAB_WIDTH`]", so a tab after three characters is one
-/// space, not four.
-pub fn expand_tabs(text: &str) -> String {
+/// Source under Perforce is very often tab-indented, and a terminal draws a tab
+/// as one cell or none at all, so nested indentation collapses unless it is
+/// expanded here. Position-aware rather than a flat substitution: a tab is
+/// "advance to the next multiple of `width`", so a tab after three characters
+/// is one space, not four.
+pub fn expand_tabs(text: &str, width: usize) -> String {
     if !text.contains('\t') {
         return text.to_owned();
     }
+    let width = width.max(1);
     let mut out = String::with_capacity(text.len());
     let mut column = 0;
     for ch in text.chars() {
         if ch == '\t' {
-            let stop = TAB_WIDTH - (column % TAB_WIDTH);
+            let stop = width - (column % width);
             out.extend(std::iter::repeat_n(' ', stop));
             column += stop;
         } else {
@@ -62,8 +60,8 @@ impl Segment {
     }
 
     /// A line of file content, with its indentation made visible.
-    fn content(text: &str) -> Self {
-        Segment::plain(expand_tabs(text))
+    fn content(text: &str, tab_width: usize) -> Self {
+        Segment::plain(expand_tabs(text, tab_width))
     }
 }
 
@@ -92,7 +90,7 @@ impl Row {
 }
 
 /// Parse unified-diff hunks into numbered rows with intra-line highlighting.
-pub fn rows(hunks: &str) -> Vec<Row> {
+pub fn rows(hunks: &str, tab_width: usize) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::new();
     let mut old_no = 0u32;
     let mut new_no = 0u32;
@@ -131,7 +129,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind,
                     old_no: None,
                     new_no: Some(new_no),
-                    segments: vec![Segment::content(body)],
+                    segments: vec![Segment::content(body, tab_width)],
                 });
                 new_no += 1;
                 pending += 1;
@@ -141,7 +139,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind,
                     old_no: Some(old_no),
                     new_no: None,
-                    segments: vec![Segment::content(body)],
+                    segments: vec![Segment::content(body, tab_width)],
                 });
                 old_no += 1;
                 pending += 1;
@@ -151,7 +149,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind,
                     old_no: None,
                     new_no: None,
-                    segments: vec![Segment::content(body)],
+                    segments: vec![Segment::content(body, tab_width)],
                 });
             }
             _ => {
@@ -160,7 +158,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind: RowKind::Context,
                     old_no: Some(old_no),
                     new_no: Some(new_no),
-                    segments: vec![Segment::content(body)],
+                    segments: vec![Segment::content(body, tab_width)],
                 });
                 old_no += 1;
                 new_no += 1;
@@ -290,7 +288,7 @@ mod tests {
 
     #[test]
     fn numbers_both_sides_from_the_hunk_header() {
-        let rows = rows(HUNK);
+        let rows = rows(HUNK, 4);
         let context = rows.iter().find(|r| r.kind == RowKind::Context).unwrap();
         assert_eq!(context.old_no, Some(41));
         assert_eq!(context.new_no, Some(41));
@@ -306,7 +304,7 @@ mod tests {
 
     #[test]
     fn a_pure_insertion_is_numbered_on_the_new_side_only() {
-        let rows = rows(HUNK);
+        let rows = rows(HUNK, 4);
         let last = rows.iter().rfind(|r| r.kind == RowKind::Add).unwrap();
         assert_eq!(last.text(), "Binaries/");
         assert_eq!(last.new_no, Some(44));
@@ -314,7 +312,7 @@ mod tests {
 
     #[test]
     fn a_rewritten_line_highlights_only_what_changed() {
-        let rows = rows("@@ -1,1 +1,1 @@\n-let x = compute(a, b);\n+let x = compute(a, c);\n");
+        let rows = rows("@@ -1,1 +1,1 @@\n-let x = compute(a, b);\n+let x = compute(a, c);\n", 4);
         let del = rows.iter().find(|r| r.kind == RowKind::Delete).unwrap();
         let add = rows.iter().find(|r| r.kind == RowKind::Add).unwrap();
 
@@ -333,7 +331,7 @@ mod tests {
 
     #[test]
     fn an_unrelated_replacement_is_not_highlighted_word_by_word() {
-        let rows = rows("@@ -1,1 +1,1 @@\n-alpha beta gamma\n+zeta eta theta\n");
+        let rows = rows("@@ -1,1 +1,1 @@\n-alpha beta gamma\n+zeta eta theta\n", 4);
         for r in &rows {
             assert!(
                 r.segments.iter().all(|s| !s.changed),
@@ -345,14 +343,14 @@ mod tests {
     #[test]
     fn unequal_runs_are_left_alone() {
         // One line became two; there is no pairing to highlight.
-        let rows = rows("@@ -1,1 +1,2 @@\n-one\n+one\n+two\n");
+        let rows = rows("@@ -1,1 +1,2 @@\n-one\n+one\n+two\n", 4);
         assert!(rows.iter().all(|r| r.segments.iter().all(|s| !s.changed)));
     }
 
     #[test]
     fn a_bare_empty_line_counts_as_context() {
         // Perforce writes empty context lines with no leading space.
-        let rows = rows("@@ -1,3 +1,3 @@\n a\n\n b\n");
+        let rows = rows("@@ -1,3 +1,3 @@\n a\n\n b\n", 4);
         let contexts: Vec<&Row> = rows.iter().filter(|r| r.kind == RowKind::Context).collect();
         assert_eq!(contexts.len(), 3);
         assert_eq!(contexts[2].old_no, Some(3));
@@ -360,7 +358,7 @@ mod tests {
 
     #[test]
     fn a_no_newline_note_does_not_consume_a_line_number() {
-        let rows = rows("@@ -1,1 +1,1 @@\n-a\n\\ No newline at end of file\n+b\n");
+        let rows = rows("@@ -1,1 +1,1 @@\n-a\n\\ No newline at end of file\n+b\n", 4);
         let note = rows.iter().find(|r| r.kind == RowKind::Note).unwrap();
         assert_eq!(note.old_no, None);
         assert_eq!(note.new_no, None);
@@ -370,7 +368,7 @@ mod tests {
 
     #[test]
     fn several_hunks_restart_the_numbering() {
-        let rows = rows("@@ -1,1 +1,1 @@\n a\n@@ -80,1 +90,1 @@\n b\n");
+        let rows = rows("@@ -1,1 +1,1 @@\n a\n@@ -80,1 +90,1 @@\n b\n", 4);
         let contexts: Vec<&Row> = rows.iter().filter(|r| r.kind == RowKind::Context).collect();
         assert_eq!(contexts[0].old_no, Some(1));
         assert_eq!(contexts[1].old_no, Some(80));
@@ -379,13 +377,13 @@ mod tests {
 
     #[test]
     fn empty_input_yields_no_rows() {
-        assert!(rows("").is_empty());
+        assert!(rows("", 4).is_empty());
     }
 
     #[test]
     fn tab_indentation_survives_into_the_view() {
         // Captured shape from Darksim.Build.cs, which is tab-indented.
-        let out = rows("@@ -7,3 +7,3 @@\n \tpublic Darksim()\n \t{\n \t\tPCHUsage = x;\n");
+        let out = rows("@@ -7,3 +7,3 @@\n \tpublic Darksim()\n \t{\n \t\tPCHUsage = x;\n", 4);
         let text: Vec<String> = out
             .iter()
             .filter(|r| r.kind == RowKind::Context)
@@ -403,21 +401,21 @@ mod tests {
 
     #[test]
     fn a_tab_advances_to_the_next_stop_rather_than_adding_four() {
-        assert_eq!(expand_tabs("ab\tc"), "ab  c", "two columns to the stop");
-        assert_eq!(expand_tabs("abc\td"), "abc d", "one column to the stop");
-        assert_eq!(expand_tabs("abcd\te"), "abcd    e", "a full stop");
-        assert_eq!(expand_tabs("\tx"), "    x");
+        assert_eq!(expand_tabs("ab\tc", 4), "ab  c", "two columns to the stop");
+        assert_eq!(expand_tabs("abc\td", 4), "abc d", "one column to the stop");
+        assert_eq!(expand_tabs("abcd\te", 4), "abcd    e", "a full stop");
+        assert_eq!(expand_tabs("\tx", 4), "    x");
     }
 
     #[test]
     fn text_without_tabs_is_untouched() {
-        assert_eq!(expand_tabs("  already spaced"), "  already spaced");
+        assert_eq!(expand_tabs("  already spaced", 4), "  already spaced");
     }
 
     #[test]
     fn indentation_changes_are_still_word_diffed() {
         // Re-indenting a line is a real change and must not be hidden.
-        let out = rows("@@ -1,1 +1,1 @@\n-\tlet x = 1;\n+\t\tlet x = 1;\n");
+        let out = rows("@@ -1,1 +1,1 @@\n-\tlet x = 1;\n+\t\tlet x = 1;\n", 4);
         let del = out.iter().find(|r| r.kind == RowKind::Delete).unwrap();
         let add = out.iter().find(|r| r.kind == RowKind::Add).unwrap();
         assert_eq!(del.text(), "    let x = 1;");

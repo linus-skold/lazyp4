@@ -2,12 +2,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind};
 use p4::{
     AnnotatedLine, ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, RevertPreview,
     Revision, ServerInfo, Stream, Unresolved,
 };
 
+use crate::config::{Action, Config, Key};
 use crate::editor::{Editor, Outcome};
 use crate::tree;
 use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
@@ -189,6 +190,7 @@ pub enum Modal {
 }
 
 pub struct App {
+    pub config: Config,
     pub focus: Panel,
     pub modal: Modal,
     pub quit: bool,
@@ -299,9 +301,17 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(worker: Worker) -> Self {
+    pub fn new(worker: Worker, config: Config) -> Self {
         worker.send(Request::Refresh);
+        // A config the reader did not understand has to say so: the alternative
+        // is a key that silently does nothing.
+        let error = match config.warnings.len() {
+            0 => None,
+            1 => Some(config.warnings[0].clone()),
+            n => Some(format!("{} (and {} more)", config.warnings[0], n - 1)),
+        };
         App {
+            config,
             focus: Panel::Files,
             modal: Modal::None,
             quit: false,
@@ -347,7 +357,7 @@ impl App {
             diff_hscroll: 0,
             diff_fullscreen: false,
             log: Vec::new(),
-            error: None,
+            error,
             worker,
             pending_files: None,
             pending_diff: None,
@@ -750,130 +760,195 @@ impl App {
             return;
         }
 
+        let key = Key::from_event(key);
+
         if self.picker.is_some() {
-            self.pick_key(key.code);
+            self.pick_key(key);
             return;
         }
 
         if self.modal != Modal::None {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => self.modal = Modal::None,
-                KeyCode::Char('?') if self.modal == Modal::Help => self.modal = Modal::None,
-                // The log is a debugging aid, so it lives one step in, behind
-                // the help sheet rather than on a key of its own.
-                KeyCode::Char('x') if self.modal == Modal::Help => self.modal = Modal::Log,
-                KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::Help,
-                _ if self.modal == Modal::History => self.history_key(key.code),
-                _ if self.modal == Modal::Blame => self.blame_key(key.code),
-                _ if self.modal == Modal::Resolve => self.resolve_key(key.code),
-                _ if self.modal == Modal::Streams => self.streams_key(key.code),
-                _ => {}
-            }
+            self.modal_key(key);
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        // Ctrl-C is the terminal's own way out, not something to rebind.
+        if key.ctrl && key.code == KeyCode::Char('c') {
             self.quit = true;
             return;
         }
+        // Each panel's number is drawn in its title, so these stay put too.
+        if let KeyCode::Char(c @ '0'..='9') = key.code {
+            if let Some(panel) = Panel::from_number(c as u8 - b'0') {
+                self.focus = panel;
+                return;
+            }
+        }
 
-        match key.code {
-            KeyCode::Char('q') => self.quit = true,
-            KeyCode::Char('?') => self.modal = Modal::Help,
-            KeyCode::Char('r') => {
+        // A key can carry more than one action; the first whose panel matches
+        // is the one meant.
+        let action = self
+            .config
+            .keys
+            .actions(key)
+            .iter()
+            .copied()
+            .find(|a| a.applies_to(self.focus));
+        if let Some(action) = action {
+            self.run(action);
+        }
+    }
+
+    fn run(&mut self, action: Action) {
+        match action {
+            Action::Quit => self.quit = true,
+            Action::Help => self.modal = Modal::Help,
+            // The log is a debugging aid, so it stays one step in, reachable
+            // from the help sheet rather than from a key of its own.
+            Action::Log => {}
+            Action::Refresh => {
                 self.busy = true;
                 self.error = None;
                 self.files_for = None;
                 self.diffs_for = None;
                 self.worker.send(Request::Refresh);
             }
-            KeyCode::Char('e') => self.edit_description(),
-            KeyCode::Char('n') => self.new_changelist(),
-            KeyCode::Char('d') if self.focus == Panel::Changelists => self.delete_changelist(),
-            KeyCode::Char('d') if self.focus == Panel::Files => self.revert_selected(),
-            KeyCode::Char('c') => self.submit_changelist(),
-            KeyCode::Char('H') => self.show_history(),
-            KeyCode::Char('a') => self.show_blame(),
-            KeyCode::Char('i') => self.ignore_selected(),
-            KeyCode::Char('U') => self.undo_change(),
-            KeyCode::Char('s') if self.focus == Panel::Files => self.shelve_selected_files(),
-            KeyCode::Char('s') => self.shelve_changelist(),
-            KeyCode::Char('S') => self.unshelve_changelist(),
-            KeyCode::Char('D') => self.delete_shelf(),
-            KeyCode::Char('/') => self.start_filter(),
-            KeyCode::Char('R') => self.show_unresolved(),
-            KeyCode::Char('v') => self.toggle_range(),
-            KeyCode::Char('p') => {
+            Action::Describe => self.edit_description(),
+            Action::NewChange => self.new_changelist(),
+            Action::DeleteChange => self.delete_changelist(),
+            Action::RevertFiles => self.revert_selected(),
+            Action::Submit => self.submit_changelist(),
+            Action::History => self.show_history(),
+            Action::Blame => self.show_blame(),
+            Action::Ignore => self.ignore_selected(),
+            Action::Undo => self.undo_change(),
+            Action::ShelveFiles => self.shelve_selected_files(),
+            Action::ShelveChange => self.shelve_changelist(),
+            Action::Unshelve => self.unshelve_changelist(),
+            Action::DeleteShelf => self.delete_shelf(),
+            Action::Filter => self.start_filter(),
+            Action::Resolve => self.show_unresolved(),
+            Action::SelectRange => self.toggle_range(),
+            Action::Streams => self.show_streams(),
+            Action::Sync => {
                 self.busy = true;
                 self.error = None;
                 self.notice = None;
                 self.worker.send(Request::Sync);
             }
-            KeyCode::Char('b') => self.show_streams(),
-            // The left column stacks four panels, so a long list is cramped.
-            KeyCode::Char('+') => self.zoom = true,
-            KeyCode::Char('_') | KeyCode::Char('-') => self.zoom = false,
-            // Esc drops a range without doing anything with it.
-            KeyCode::Esc if self.select_anchor.is_some() => self.select_anchor = None,
-            KeyCode::Char('u') => {
+            Action::Scan => {
                 if !self.scanning {
                     self.scanning = true;
                     self.worker.send(Request::ScanWorkspace);
                 }
             }
-            KeyCode::Char(' ') => self.move_selected_file(),
-            // On a directory this folds the tree; everywhere else it is the
-            // fullscreen diff, as lazygit does with Enter on a folder.
-            KeyCode::Enter
-                if self.focus == Panel::Files
-                    && matches!(self.selected_row(), Some(FileRow::Dir { .. })) =>
-            {
-                self.toggle_collapse(None);
-            }
-            KeyCode::Enter => {
-                self.diff_fullscreen = !self.diff_fullscreen;
-                if self.diff_fullscreen {
-                    self.focus = Panel::Diff;
-                }
-            }
-            KeyCode::Esc if self.diff_fullscreen => self.diff_fullscreen = false,
-
-            KeyCode::Tab => self.focus = self.focus.step(1),
-            KeyCode::BackTab => self.focus = self.focus.step(-1),
+            // The left column stacks four panels, so a long list is cramped.
+            Action::ZoomIn => self.zoom = true,
+            Action::ZoomOut => self.zoom = false,
+            Action::Move => self.move_selected_file(),
+            Action::Fullscreen => self.toggle_fullscreen(),
+            Action::Cancel => self.cancel(),
+            Action::NextPanel => self.focus = self.focus.step(1),
+            Action::PrevPanel => self.focus = self.focus.step(-1),
             // Within a panel rather than between panels: only Changelists has
             // tabs today, so elsewhere these do nothing.
-            KeyCode::Char(']') => self.switch_tab(1),
-            KeyCode::Char('[') => self.switch_tab(-1),
-            KeyCode::Char(c @ '0'..='9') => {
-                if let Some(panel) = Panel::from_number(c as u8 - b'0') {
-                    self.focus = panel;
-                }
-            }
+            Action::NextTab => self.switch_tab(1),
+            Action::PrevTab => self.switch_tab(-1),
+            Action::Down => self.move_by(1),
+            Action::Up => self.move_by(-1),
+            Action::PageDown => self.move_by(10),
+            Action::PageUp => self.move_by(-10),
+            Action::First => self.move_to(0),
+            Action::Last => self.move_to(usize::MAX),
+            Action::Left => self.sideways(-1),
+            Action::Right => self.sideways(1),
+        }
+    }
 
-            KeyCode::Char('j') | KeyCode::Down => self.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_by(-1),
-            KeyCode::Char('g') | KeyCode::Home => self.move_to(0),
-            KeyCode::Char('G') | KeyCode::End => self.move_to(usize::MAX),
-            KeyCode::PageDown => self.move_by(10),
-            KeyCode::PageUp => self.move_by(-10),
+    /// On a directory this folds the tree; everywhere else it is the fullscreen
+    /// diff, as lazygit does with Enter on a folder.
+    fn toggle_fullscreen(&mut self) {
+        if self.focus == Panel::Files && matches!(self.selected_row(), Some(FileRow::Dir { .. })) {
+            self.toggle_collapse(None);
+            return;
+        }
+        self.diff_fullscreen = !self.diff_fullscreen;
+        if self.diff_fullscreen {
+            self.focus = Panel::Diff;
+        }
+    }
+
+    /// Back out of whatever is open, innermost first.
+    fn cancel(&mut self) {
+        if self.select_anchor.is_some() {
+            self.select_anchor = None;
+        } else if self.diff_fullscreen {
+            self.diff_fullscreen = false;
+        }
+    }
+
+    /// What moving left or right means, which is not the same in every panel.
+    fn sideways(&mut self, by: isize) {
+        match self.focus {
             // Long lines are truncated rather than wrapped, so the diff scrolls
             // sideways.
-            KeyCode::Char('h') | KeyCode::Left if self.focus == Panel::Diff => {
-                self.diff_hscroll = self.diff_hscroll.saturating_sub(8);
-            }
-            KeyCode::Char('l') | KeyCode::Right if self.focus == Panel::Diff => {
-                self.diff_hscroll += 8;
-            }
+            Panel::Diff if by < 0 => self.diff_hscroll = self.diff_hscroll.saturating_sub(8),
+            Panel::Diff => self.diff_hscroll += 8,
             // Tree navigation, which only the Files panel has.
-            KeyCode::Char('h') | KeyCode::Left if self.focus == Panel::Files => {
-                self.toggle_collapse(Some(true));
-            }
-            KeyCode::Char('l') | KeyCode::Right if self.focus == Panel::Files => {
-                self.toggle_collapse(Some(false));
-            }
-
+            Panel::Files => self.toggle_collapse(Some(by < 0)),
             _ => {}
         }
+    }
+
+    /// Keys while an overlay is up. Each one closes on the key that opened it,
+    /// as well as on Esc and the quit key.
+    fn modal_key(&mut self, key: Key) {
+        let closes = self
+            .modal_toggle()
+            .is_some_and(|action| self.config.keys.is(key, action));
+        if closes || key.code == KeyCode::Esc || self.config.keys.is(key, Action::Quit) {
+            self.modal = Modal::None;
+            return;
+        }
+
+        match self.modal {
+            // The log is a debugging aid, so it lives one step in, behind the
+            // help sheet rather than on a key of its own.
+            Modal::Help if self.config.keys.is(key, Action::Log) => self.modal = Modal::Log,
+            Modal::Log if self.config.keys.is(key, Action::Log) => self.modal = Modal::Help,
+            Modal::History => self.history_key(key),
+            Modal::Blame => self.blame_key(key),
+            Modal::Resolve => self.resolve_key(key),
+            Modal::Streams => self.streams_key(key),
+            _ => {}
+        }
+    }
+
+    /// The action whose key opened the overlay, and so also closes it.
+    fn modal_toggle(&self) -> Option<Action> {
+        match self.modal {
+            Modal::Help => Some(Action::Help),
+            Modal::History => Some(Action::History),
+            Modal::Blame => Some(Action::Blame),
+            Modal::Resolve => Some(Action::Resolve),
+            Modal::Streams => Some(Action::Streams),
+            // The log closes on Esc, and steps back to the help sheet on `x`.
+            Modal::Log | Modal::None => None,
+        }
+    }
+
+    /// Which way a key moves a cursor, if it moves one at all.
+    fn nav(&self, key: Key) -> Option<Action> {
+        [
+            Action::Down,
+            Action::Up,
+            Action::First,
+            Action::Last,
+            Action::PageDown,
+            Action::PageUp,
+        ]
+        .into_iter()
+        .find(|action| self.config.keys.is(key, *action))
     }
 
     /// Fold the last workspace scan into the lower group, dropping anything
@@ -919,18 +994,11 @@ impl App {
         self.worker.send(Request::LoadStreams);
     }
 
-    fn streams_key(&mut self, code: KeyCode) {
-        let count = self.streams.len();
-        match code {
-            KeyCode::Char('j') | KeyCode::Down if count > 0 => {
-                self.streams_sel = (self.streams_sel + 1).min(count - 1);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.streams_sel = self.streams_sel.saturating_sub(1);
-            }
-            KeyCode::Char('b') => self.modal = Modal::None,
-            KeyCode::Enter => self.switch_stream(),
-            _ => {}
+    fn streams_key(&mut self, key: Key) {
+        if let Some(nav) = self.nav(key) {
+            self.streams_sel = step(self.streams_sel, self.streams.len(), nav);
+        } else if key.code == KeyCode::Enter {
+            self.switch_stream();
         }
     }
 
@@ -966,16 +1034,14 @@ impl App {
     }
 
     /// Keys inside the resolve view.
-    fn resolve_key(&mut self, code: KeyCode) {
-        let count = self.unresolved.len();
-        match code {
-            KeyCode::Char('j') | KeyCode::Down if count > 0 => {
-                self.unresolved_sel = (self.unresolved_sel + 1).min(count - 1);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.unresolved_sel = self.unresolved_sel.saturating_sub(1);
-            }
-            KeyCode::Char('R') => self.modal = Modal::None,
+    fn resolve_key(&mut self, key: Key) {
+        if let Some(nav) = self.nav(key) {
+            self.unresolved_sel = step(self.unresolved_sel, self.unresolved.len(), nav);
+            return;
+        }
+        // These answer the question the view asks rather than naming a command,
+        // so they are fixed, like the `y` of a confirmation.
+        match key.code {
             KeyCode::Char('y') => self.settle(Resolution::Yours),
             KeyCode::Char('t') => self.settle(Resolution::Theirs),
             KeyCode::Char('m') => self.settle(Resolution::Merge),
@@ -1270,35 +1336,19 @@ impl App {
         self.worker.send(Request::LoadBlame { depot_path });
     }
 
-    /// Keys inside the blame view. A file is long, so it pages as well as steps.
-    fn blame_key(&mut self, code: KeyCode) {
-        let last = self.blame.len().saturating_sub(1);
-        let step = |sel: usize, by: isize| (sel as isize + by).clamp(0, last as isize) as usize;
-        match code {
-            KeyCode::Char('j') | KeyCode::Down => self.blame_sel = step(self.blame_sel, 1),
-            KeyCode::Char('k') | KeyCode::Up => self.blame_sel = step(self.blame_sel, -1),
-            KeyCode::PageDown => self.blame_sel = step(self.blame_sel, 20),
-            KeyCode::PageUp => self.blame_sel = step(self.blame_sel, -20),
-            KeyCode::Char('g') | KeyCode::Home => self.blame_sel = 0,
-            KeyCode::Char('G') | KeyCode::End => self.blame_sel = last,
-            KeyCode::Char('a') => self.modal = Modal::None,
-            _ => {}
+    /// Keys inside the blame view.
+    fn blame_key(&mut self, key: Key) {
+        if let Some(nav) = self.nav(key) {
+            self.blame_sel = step(self.blame_sel, self.blame.len(), nav);
         }
     }
 
     /// Keys inside the revision-history view.
-    fn history_key(&mut self, code: KeyCode) {
-        let count = self.history.len();
-        match code {
-            KeyCode::Char('j') | KeyCode::Down if count > 0 => {
-                self.history_rev_sel = (self.history_rev_sel + 1).min(count - 1);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.history_rev_sel = self.history_rev_sel.saturating_sub(1);
-            }
-            KeyCode::Char('H') => self.modal = Modal::None,
-            KeyCode::Char('U') => self.undo_revision(),
-            _ => {}
+    fn history_key(&mut self, key: Key) {
+        if let Some(nav) = self.nav(key) {
+            self.history_rev_sel = step(self.history_rev_sel, self.history.len(), nav);
+        } else if self.config.keys.is(key, Action::Undo) {
+            self.undo_revision();
         }
     }
 
@@ -1751,20 +1801,17 @@ impl App {
         });
     }
 
-    fn pick_key(&mut self, code: KeyCode) {
-        let Some(picker) = &mut self.picker else {
+    fn pick_key(&mut self, key: Key) {
+        if key.code == KeyCode::Esc || self.config.keys.is(key, Action::Quit) {
+            self.picker = None;
             return;
-        };
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => self.picker = None,
-            KeyCode::Char('j') | KeyCode::Down => {
-                picker.sel = (picker.sel + 1).min(picker.options.len() - 1);
-            }
-            KeyCode::Char('k') | KeyCode::Up => picker.sel = picker.sel.saturating_sub(1),
-            KeyCode::Char('g') | KeyCode::Home => picker.sel = 0,
-            KeyCode::Char('G') | KeyCode::End => picker.sel = picker.options.len() - 1,
-            KeyCode::Enter | KeyCode::Char(' ') => self.confirm_pick(),
-            _ => {}
+        }
+        if let (Some(nav), Some(picker)) = (self.nav(key), self.picker.as_mut()) {
+            picker.sel = step(picker.sel, picker.options.len(), nav);
+            return;
+        }
+        if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+            self.confirm_pick();
         }
     }
 
@@ -1972,6 +2019,21 @@ pub fn ignore_entry(root: &str, name: &str, local: &str) -> Option<(String, Stri
         return None;
     }
     Some((file, local[root.len() + 1..].to_owned()))
+}
+
+/// Move a cursor within `count` rows the way a navigation action says.
+fn step(sel: usize, count: usize, action: Action) -> usize {
+    let last = count.saturating_sub(1) as isize;
+    let by = |d: isize| (sel as isize + d).clamp(0, last) as usize;
+    match action {
+        Action::Down => by(1),
+        Action::Up => by(-1),
+        Action::PageDown => by(20),
+        Action::PageUp => by(-20),
+        Action::First => 0,
+        Action::Last => last.max(0) as usize,
+        _ => sel,
+    }
 }
 
 /// First line of a description, for a one-line entry.

@@ -11,13 +11,18 @@ use ratatui::Terminal;
 use crate::app::{
     has_description, ignore_entry, App, ChangeTab, Destination, FileRow, Modal, Panel,
 };
+use crate::config::Config;
 use crate::ui;
 use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
 
 const MINE: &str = "linus-desktop";
 
 fn app() -> App {
-    let mut app = App::new(Worker::detached());
+    app_with(Config::default())
+}
+
+fn app_with(config: Config) -> App {
+    let mut app = App::new(Worker::detached(), config);
     app.handle(Event::Info(ServerInfo {
         user: "linsko".into(),
         client: MINE.into(),
@@ -30,7 +35,6 @@ fn app() -> App {
         // Pinned so the tree root does not shift with the files under test:
         // without a stream it is whatever directory they happen to share.
         stream: Some("//darksim/main".into()),
-        ..Default::default()
     }));
     app.handle(Event::Changes {
         pending: vec![
@@ -175,6 +179,19 @@ fn render(app: &App, width: u16, height: u16) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Every foreground colour the drawn screen used.
+fn colors(app: &App, width: u16, height: u16) -> Vec<ratatui::style::Color> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
+    terminal
+        .draw(|frame| ui::draw(frame, app))
+        .expect("draw must not panic");
+    let buffer = terminal.backend().buffer().clone();
+    let mut seen: Vec<ratatui::style::Color> = buffer.content().iter().map(|c| c.fg).collect();
+    seen.sort_by_key(|c| format!("{c:?}"));
+    seen.dedup();
+    seen
 }
 
 fn press(app: &mut App, code: KeyCode) {
@@ -2063,6 +2080,82 @@ fn space_on_an_untracked_file_opens_it_for_add_by_local_path() {
     assert!(files[0].untracked());
     // A file Perforce has never seen has no usable depot path.
     assert!(files[0].command_path().starts_with("E:\\ws"));
+}
+
+#[test]
+fn a_rebound_key_moves_the_command_off_the_old_one() {
+    let mut app = app_with(Config::parse("[keys]\nsubmit = C\n"));
+    app.handle(Event::Files {
+        change: ChangeId::Number(395),
+        files: vec![file("//darksim/main/AGENTS.md", FileAction::Add, false)],
+        default_files: Vec::new(),
+    });
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(app.confirm.is_none(), "c no longer submits");
+
+    press(&mut app, KeyCode::Char('C'));
+    assert!(app.confirm.is_some(), "C does");
+}
+
+#[test]
+fn the_help_sheet_and_the_status_bar_name_the_keys_actually_bound() {
+    let mut app = app_with(Config::parse("[keys]\nsubmit = C\nblame = ctrl-b\n"));
+    app.focus = Panel::Files;
+
+    let bar = render(&app, 120, 40);
+    assert!(bar.contains("ctrl-b"), "the bar hints the real key\n{bar}");
+
+    press(&mut app, KeyCode::Char('?'));
+    let out = render(&app, 120, 40);
+    assert!(out.contains("C        submit"), "{out}");
+    assert!(out.contains("ctrl-b   blame"), "{out}");
+}
+
+#[test]
+fn the_theme_changes_what_is_drawn() {
+    use ratatui::style::Color;
+    let plain = colors(&app(), 120, 40);
+    assert!(plain.contains(&Color::Yellow), "the default focus colour");
+
+    let themed = app_with(Config::parse("[theme]\nfocus = \"#ff00ff\"\n"));
+    let seen = colors(&themed, 120, 40);
+    assert!(seen.contains(&Color::Rgb(255, 0, 255)), "{seen:?}");
+}
+
+#[test]
+fn the_diff_uses_the_configured_tab_width() {
+    let drawn = |width: &str| {
+        let mut app = app_with(Config::parse(&format!("[diff]\ntab_width = {width}\n")));
+        app.diffs = vec![FileDiff {
+            depot_path: "//darksim/main/AGENTS.md".into(),
+            rev: Some(3),
+            hunks: "@@ -1,1 +1,1 @@\n \tindented\n".into(),
+        }];
+        app.diffs_for = Some(ChangeId::Number(395));
+        app.focus = Panel::Files;
+        render(&app, 120, 40)
+    };
+
+    // The gutter is the same either way, so the column the word lands in is
+    // the tab and nothing else.
+    let column = |out: &str| {
+        out.lines()
+            .find(|l| l.contains("indented"))
+            .and_then(|l| l.find("indented"))
+            .expect("the diff line is drawn")
+    };
+    assert_eq!(column(&drawn("8")) - column(&drawn("2")), 6);
+}
+
+#[test]
+fn a_config_lazyp4_could_not_read_says_so_rather_than_going_quiet() {
+    let app = app_with(Config::parse("[keys]\nsubmitt = c\n"));
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("no action named submitt")));
 }
 
 #[test]

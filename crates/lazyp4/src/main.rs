@@ -1,6 +1,7 @@
 //! lazyp4 — a terminal UI for Perforce.
 
 mod app;
+mod config;
 mod diffview;
 mod editor;
 #[cfg(test)]
@@ -14,6 +15,7 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
 use app::App;
+use config::Config;
 use worker::Worker;
 
 /// How often the spinner advances while a command is in flight.
@@ -26,7 +28,7 @@ const POLL: Duration = Duration::from_secs(5);
 
 fn main() -> io::Result<()> {
     let (worker, events) = Worker::spawn();
-    let mut app = App::new(worker);
+    let mut app = App::new(worker, Config::load());
 
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app, &events);

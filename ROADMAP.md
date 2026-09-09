@@ -17,11 +17,15 @@ command that actually does the job.
 | `Space` moves a file or a whole directory | `reopen`, or `add`/`edit`/`delete` first |
 | A picker when there is no implied destination | Including a changelist created on the spot |
 | `n` new changelist, `d` delete an empty one | |
-| `c` submit, `d` revert | Both behind a confirmation with no default answer |
+| `c` submit, `d` revert | Both confirmed, with no default answer; the default changelist too |
 | `s` shelve, `S` unshelve, `D` delete a shelf | Replacing a shelf is confirmed |
 | `e` edits a changelist description | Rewrites one spec field |
-| `H` a file's revisions, `U` undo a submitted change | Undo opens into its own changelist |
+| `H` a file's revisions, `U` undo a change or one revision | Undo opens into its own changelist |
+| `a` blames a file line by line | `p4 annotate -c -u -q` |
+| `i` ignores an untracked file | Appends to what `P4IGNORE` names |
 | `u` scans the workspace for unopened changes | `p4 status`, ~40 s on a large tree |
+| Reloads when `p4` is used elsewhere | Polls `p4 opened` every five seconds while idle |
+| Theme, keys and tab width from a config file | See the README |
 | Help (`?`), and the command log behind it (`x`) | Every P4API call is logged |
 
 The `p4` crate also has `print_text` wired up but nothing in the UI uses it.
@@ -149,14 +153,15 @@ instead, into a changelist of its own. `a` blames a file line by line with
 
 ## G. Polish
 
-- A config file for theme, keybindings and the diff tab width, which is fixed
-  at four.
-
 Done: `/` filtering; a help sheet grouped by panel with the command log behind
 it; `+`/`_` to zoom a panel; the running command named beside a spinner rather
 than a bare "working"; auto-refresh, which polls `p4 opened` every five seconds
-while the app sits still and reloads when the answer moves; and `i`, which adds
-an untracked file to the workspace ignore file.
+while the app sits still and reloads when the answer moves; `i`, which adds an
+untracked file to the workspace ignore file; and a config file for the theme,
+the keys and the diff tab width, read by a reader of lazyp4's own rather than a
+TOML crate. Every key routes through a named action, and the help sheet and
+status bar are generated from the keymap, so a rebound key is right everywhere
+without anyone having to remember to say so. See the README for the file.
 
 `i` writes to the file `P4IGNORE` names in the workspace root. Perforce keeps
 unopened files read-only, so ignoring fails on an ignore file that is in the
@@ -164,7 +169,7 @@ depot and not open for edit; the message says so rather than opening it.
 
 ## What is left, in order
 
-Done: **A**, **C**, **D**, **E**, most of **F**, and all of **B** but **B2** and
+Done: **A**, **C**, **D**, **E**, **F**, **G**, and all of **B** but **B2** and
 **B6**. lazyp4 can sync, arrange, shelve, resolve and finish a task without
 dropping to the shell.
 
@@ -174,10 +179,9 @@ What remains, in the order it is worth doing:
    leaving the alternate screen and coming back, which went with the external
    diff viewer. Until then a real conflict has nowhere to go.
 2. **B6** — a scan scoped to a directory rather than the whole workspace.
-4. **A leftovers** — submitting the default changelist, and `p4 revert -n` as a
-   stronger confirmation.
-5. The rest of **G**, the **F** leftovers, and multi-select in the resolve
-   view.
+3. **B2** — `p4 reopen -c <cl> //...` for the whole workspace at once.
+4. Multi-select in the resolve view, and the **C** leftovers: `-f` when
+   unshelving somebody else's shelf, and deleting single files from a shelf.
 
 ## Non-goals
 

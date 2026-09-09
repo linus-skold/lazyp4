@@ -3,10 +3,9 @@
 A terminal UI for Perforce (Helix Core), in the style of lazygit: browse
 changelists and their files in panels, and read diffs in the shell.
 
-Status: early. You can browse pending, shelved and submitted changelists, read
-each file's diff in the pane, move files between changelists, and edit
-changelist descriptions. Submitting is not wired up yet — see
-[ROADMAP.md](ROADMAP.md) for what is missing and in what order.
+You can sync, arrange, shelve, resolve and submit a task without dropping to the
+shell. What is still missing — chiefly a merge tool for conflicts `p4 resolve
+-am` refuses — is in [ROADMAP.md](ROADMAP.md), in the order it is worth doing.
 
 ```powershell
 cargo run -p lazyp4
@@ -227,13 +226,80 @@ the changelist is left exactly as the server sent it.
 | `p` | sync the workspace |
 | `b` | list streams, and switch |
 | `R` | resolve files that changed in the depot while open |
-| `H` | revision history of the selected file |
+| `H` | revision history of the selected file — `U` there undoes one revision |
+| `a` | blame the selected file, line by line |
+| `i` | add an untracked file to the ignore file |
 | `U` | undo a submitted change into a new changelist |
 | `?` | help — every key, grouped; `x` from there opens the p4 command log |
 | `q` | quit |
 
 lazyp4 uses the ambient `P4PORT`, `P4USER` and `P4CLIENT`, so run it from a
 workspace directory with a `p4config.txt` the same way you would run `p4`.
+
+While it sits still, lazyp4 checks every five seconds whether `p4` has been used
+in another window, and reloads if it has.
+
+## Configuration
+
+Colours, keys and the diff tab width come from a config file. Everything in it
+is optional, and anything lazyp4 cannot read is reported in the status bar
+rather than ignored.
+
+| Platform | Path |
+| --- | --- |
+| Windows | `%APPDATA%\lazyp4\config.toml` |
+| Linux, macOS | `$XDG_CONFIG_HOME/lazyp4/config.toml`, else `~/.config/lazyp4/config.toml` |
+
+`LAZYP4_CONFIG` names a file outright and overrides both.
+
+```toml
+[diff]
+tab_width = 4          # 1 to 16
+
+[theme]
+# A name, #rrggbb, or a number in the 256-colour palette.
+focus      = "#ffb000" # borders and keys of whatever has focus
+idle       = "darkgray"
+muted      = "gray"
+added      = "green"
+modified   = "yellow"
+deleted    = "red"
+integrated = "cyan"
+untracked  = "magenta"
+directory  = "blue"
+changelist = "cyan"
+shelved    = "magenta"
+selection  = "blue"    # the ground behind a range selection
+danger     = "red"     # errors, and anything that cannot be undone
+ok         = "green"   # notices
+text       = "white"   # text on a dark ground
+inverse    = "black"   # text on a light one
+
+[keys]
+# Naming an action replaces the keys it came with, rather than adding to them.
+# Name it twice to give it two keys.
+submit = "C"
+blame  = "ctrl-b"
+```
+
+Actions are named `down` `up` `first` `last` `page_down` `page_up` `left`
+`right` `next_panel` `prev_panel` `next_tab` `prev_tab` `filter` `zoom_in`
+`zoom_out` `cancel` `move` `revert` `shelve_files` `select_range` `history`
+`blame` `ignore` `scan` `new_change` `describe` `submit` `delete_change`
+`shelve` `unshelve` `delete_shelf` `undo` `fullscreen` `sync` `streams`
+`resolve` `refresh` `log` `help` `quit`.
+
+A key is a single character, or one of `space` `enter` `tab` `shift-tab` `esc`
+`backspace` `up` `down` `left` `right` `home` `end` `pageup` `pagedown`, with an
+optional `ctrl-` in front. Shift lives in the character itself, so `S` rather
+than `shift-s`.
+
+Four things stay put: `1`–`4` and `0` focus the panels whose titles carry those
+numbers, `Ctrl-C` quits, `Enter` and `Esc` answer a dialog, and `y` `t` `m` `a`
+answer the resolve view. They answer a question rather than name a command.
+
+The help sheet and the status bar are built from the keymap, so they show
+whatever is actually bound.
 
 ## Build
 
