@@ -12,17 +12,19 @@ command that actually does the job.
 | Changelist tabs — Local, Shelved, Others | Ownership by user, `[`/`]` |
 | The default changelist, synthesised | `p4 changes` never reports it |
 | Files as a folding tree rooted at the stream | Per-group fold state |
+| `/` narrows any list panel | Per panel, shown in its title |
 | Inline diff, line numbers, word-level highlighting, tabs expanded | No external viewer |
 | `Space` moves a file or a whole directory | `reopen`, or `add`/`edit`/`delete` first |
 | A picker when there is no implied destination | Including a changelist created on the spot |
 | `n` new changelist, `d` delete an empty one | |
 | `c` submit, `d` revert | Both behind a confirmation with no default answer |
+| `s` shelve, `S` unshelve, `D` delete a shelf | Replacing a shelf is confirmed |
 | `e` edits a changelist description | Rewrites one spec field |
+| `H` a file's revisions, `U` undo a submitted change | Undo opens into its own changelist |
 | `u` scans the workspace for unopened changes | `p4 status`, ~40 s on a large tree |
-| Command log (`x`), help (`?`) | Every P4API call is logged |
+| Help (`?`), and the command log behind it (`x`) | Every P4API call is logged |
 
-The `p4` crate also has `filelog` and `print_text` wired up but nothing in the
-UI uses them yet.
+The `p4` crate also has `print_text` wired up but nothing in the UI uses it.
 
 ## What does not map
 
@@ -71,19 +73,20 @@ What is left here:
 
 ## B. The file flow
 
-Four of the seven are done. What is left:
+Five of the seven are done. What is left:
 
-1. **Multi-select.** lazygit stages a range with `v` then movement. Without it,
-   moving thirty scattered files is thirty keystrokes. Every verb — `Space`,
-   `d`, and shelving when it arrives — should take a selection, not one row.
-2. **Move all.** lazygit's `a` stages everything. `p4 reopen -c <cl> //...` does
-   it in one command. `Space` on a directory covers most of this already, so it
-   is only worth doing for the whole-workspace case.
-6. **A cheaper scan.** `u` walks the whole workspace. `p4 status -f <dir>` scoped
-   to the selected file's directory would make it usable mid-task.
-Done: **3** a target that does not exist yet, via the move picker; **4** shorter
-paths, via the folding tree; **5** discard, via `d` in Files; **7** filtering,
-via `/` on any list panel.
+- **B1. Multi-select.** lazygit stages a range with `v` then movement. Without
+  it, moving thirty scattered files is thirty keystrokes. Every verb — `Space`,
+  `d`, `s` — should take a selection, not one row.
+- **B2. Move all.** lazygit's `a` stages everything. `p4 reopen -c <cl> //...`
+  does it in one command. `Space` on a directory covers most of this already,
+  so it is only worth doing for the whole-workspace case.
+- **B6. A cheaper scan.** `u` walks the whole workspace. `p4 status -f <dir>`
+  scoped to the selected file's directory would make it usable mid-task.
+
+Done: **B3** a target that does not exist yet, via the move picker; **B4**
+shorter paths, via the folding tree; **B5** discard, via `d` in Files; **B7**
+filtering, via `/` on any list panel.
 
 ## C. Shelving
 
@@ -141,18 +144,21 @@ What is left:
 
 ## G. Polish
 
-- `/` to filter any list.
 - `+`/`_` to zoom a panel, as lazygit does. `Enter` already fullscreens the diff.
-- A config file for theme and keybindings.
-- `p4 sync` progress and a spinner — several commands take tens of seconds and
-  the UI only says "working".
+- A config file for theme, keybindings and the diff tab width, which is fixed
+  at four.
+- Progress for slow commands. `u` takes ~40 s and the UI only says "working".
 - Auto-refresh after external `p4` use.
 - `.p4ignore` editing, matching lazygit's `i`.
 
+Done: `/` filtering, and a help sheet grouped by panel with the command log
+behind it.
+
 ## What is left, in order
 
-1. ~~**A**~~, ~~**B3**~~, ~~**B4**~~, ~~**B5**~~ — done. lazyp4 can finish a task.
-2. ~~**C**~~ and ~~most of **F**~~ — done.
+1. ~~**A**~~, ~~**C**~~, most of ~~**F**~~, and ~~**B3**–**B5**~~, ~~**B7**~~ —
+   done. lazyp4 can arrange, shelve and finish a task.
+2. Nothing here is blocking day to day work except a conflict, which is **D**.
 3. **D** — resolve, which unblocks submit in the conflict case and is the
    largest thing still missing.
 4. **B1** — multi-select, so every verb takes a range rather than one row.
