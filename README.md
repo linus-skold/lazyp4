@@ -162,6 +162,16 @@ dropped.
 leaves the shelf alone, so the same shelf can be unshelved on several machines.
 `D` deletes the shelf, leaving the open files untouched.
 
+## Syncing and streams
+
+`p` syncs the workspace and says how many files changed. Files open for edit
+are left alone — Perforce refuses to overwrite them rather than discarding
+work.
+
+`b` lists the depot's streams, with the one this workspace is on marked. `Enter`
+switches, after a confirmation: the workspace is resynced to match, which can
+move a lot of data, and Perforce refuses outright while any file is open.
+
 ## Resolving
 
 A file that changed in the depot while you had it open cannot be submitted
@@ -213,6 +223,8 @@ the changelist is left exactly as the server sent it.
 | `s` | shelve — the changelist, or just the selected files |
 | `S` | unshelve into another changelist |
 | `D` | delete the shelf |
+| `p` | sync the workspace |
+| `b` | list streams, and switch |
 | `R` | resolve files that changed in the depot while open |
 | `H` | revision history of the selected file |
 | `U` | undo a submitted change into a new changelist |

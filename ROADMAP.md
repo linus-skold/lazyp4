@@ -125,15 +125,21 @@ What is left:
 
 ## E. Streams and branches
 
-lazygit's panel 3 is branches. Ours is changelists, which is the right call for
-day-to-day work — but there is no way to see or change stream.
+Done. `p` syncs, `b` lists the streams and switches between them, and Status
+already shows the current one.
 
-- List streams: `p4 streams`.
-- Switch: `p4 switch <stream>`. Slow and destructive of workspace state, so it
-  needs a confirmation that says what will be resynced.
-- Show the current stream and any pending integrations in Status.
-- Sync: `p4 sync`, with progress. lazygit's `p` (pull) is the closest analogue
-  and is missing entirely.
+| Need | Command | State |
+| --- | --- | --- |
+| ~~Sync~~ | `p4 sync` | `p`, reporting how many files changed |
+| ~~List streams~~ | `p4 streams` | `b`, with the current one marked |
+| ~~Switch~~ | `p4 switch <stream>` | `Enter` in that view, confirmed |
+| ~~Show the current stream~~ | `p4 info` | The Status panel |
+
+What is left:
+
+- Progress while syncing. A large sync moves gigabytes and the UI only says
+  "working"; see **G**.
+- Pending integrations are not shown anywhere.
 
 ## F. History
 
@@ -161,21 +167,22 @@ behind it.
 
 ## What is left, in order
 
-Done: **A**, **C**, **D**, most of **F**, and all of **B** but **B2** and
-**B6**. lazyp4 can arrange, shelve, resolve and finish a task.
+Done: **A**, **C**, **D**, **E**, most of **F**, and all of **B** but **B2** and
+**B6**. lazyp4 can sync, arrange, shelve, resolve and finish a task without
+dropping to the shell.
 
 What remains, in the order it is worth doing:
 
-1. **E** — `p4 sync` above all. There is still no way to pull other people's
-   work into the workspace, which is the last thing that forces a drop to the
-   shell. Streams and `p4 switch` come with it.
-2. **A merge tool** for what `resolve -am` refuses. Needs the machinery for
+1. **A merge tool** for what `resolve -am` refuses. Needs the machinery for
    leaving the alternate screen and coming back, which went with the external
-   diff viewer.
+   diff viewer. Until then a real conflict has nowhere to go.
+2. **G's progress reporting.** `u` takes ~40 s and a large sync far longer,
+   with nothing on screen but "working".
 3. **B6** — a scan scoped to a directory rather than the whole workspace.
 4. **A leftovers** — submitting the default changelist, and `p4 revert -n` as a
    stronger confirmation.
-5. **G**, the **F** leftovers, and multi-select in the resolve view.
+5. The rest of **G**, the **F** leftovers, and multi-select in the resolve
+   view.
 
 ## Non-goals
 

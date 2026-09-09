@@ -674,6 +674,99 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
     assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
 }
 
+fn stream(path: &str, kind: &str) -> p4::Stream {
+    p4::Stream {
+        path: path.into(),
+        name: path.rsplit('/').next().unwrap_or_default().into(),
+        parent: "//darksim/main".into(),
+        kind: kind.into(),
+        owner: "linsko".into(),
+    }
+}
+
+#[test]
+fn p_syncs_the_workspace_and_says_what_it_did() {
+    let mut app = app();
+    app.last_request();
+    press(&mut app, KeyCode::Char('p'));
+
+    assert!(matches!(app.last_request(), Some(Request::Sync)));
+
+    app.handle(Event::Notice("14 file(s) updated".into()));
+    app.handle(Event::Idle);
+    let out = render(&app, 120, 40);
+    assert!(out.contains("14 file(s) updated"), "{out}");
+}
+
+#[test]
+fn a_notice_clears_a_previous_error() {
+    let mut app = app();
+    app.handle(Event::Error("something went wrong".into()));
+    app.handle(Event::Notice("already up to date".into()));
+
+    assert!(app.error.is_none());
+    assert!(render(&app, 120, 40).contains("already up to date"));
+}
+
+#[test]
+fn b_lists_the_streams_and_marks_the_current_one() {
+    let mut app = app();
+    app.last_request();
+    press(&mut app, KeyCode::Char('b'));
+
+    assert_eq!(app.modal, Modal::Streams);
+    assert!(matches!(app.last_request(), Some(Request::LoadStreams)));
+
+    app.handle(Event::Streams(vec![
+        stream("//darksim/main", "mainline"),
+        stream("//darksim/dev", "virtual"),
+    ]));
+    app.handle(Event::Idle);
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("//darksim/dev"), "{out}");
+    assert!(out.contains("mainline"), "{out}");
+    // The fixture's workspace is on main, so that row is marked.
+    assert!(out.contains("▸ //darksim/main"), "{out}");
+}
+
+#[test]
+fn switching_stream_is_confirmed_and_warns_about_the_resync() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('b'));
+    app.handle(Event::Streams(vec![
+        stream("//darksim/main", "mainline"),
+        stream("//darksim/dev", "virtual"),
+    ]));
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('j')); // onto dev
+    press(&mut app, KeyCode::Enter);
+
+    let confirm = app.confirm.as_ref().expect("switching needs confirming");
+    assert_eq!(confirm.title, "Switch to //darksim/dev?");
+    assert!(confirm.lines.iter().any(|l| l.contains("resynced")));
+
+    press(&mut app, KeyCode::Char('y'));
+    let Some(Request::SwitchStream { stream }) = app.last_request() else {
+        panic!("expected a switch");
+    };
+    assert_eq!(stream, "//darksim/dev");
+}
+
+#[test]
+fn switching_to_the_stream_already_on_is_refused() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('b'));
+    app.handle(Event::Streams(vec![stream("//darksim/main", "mainline")]));
+    app.last_request();
+
+    press(&mut app, KeyCode::Enter);
+    assert!(app.confirm.is_none());
+    assert!(app.last_request().is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("already on")));
+}
+
 #[test]
 fn v_selects_a_range_that_every_verb_then_acts_on() {
     let mut app = nested();

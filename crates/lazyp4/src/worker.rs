@@ -10,7 +10,7 @@ use std::thread;
 
 use p4::{
     diff, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection, FileAction,
-    FileDiff, Resolution, Revision, ServerInfo, Unresolved,
+    FileDiff, Resolution, Revision, ServerInfo, Stream, Unresolved,
 };
 
 /// A file in a changelist, from whichever command could see it.
@@ -112,6 +112,11 @@ pub enum Request {
     LoadHistory {
         depot_path: String,
     },
+    Sync,
+    LoadStreams,
+    SwitchStream {
+        stream: String,
+    },
     LoadUnresolved,
     Resolve {
         how: Resolution,
@@ -164,6 +169,9 @@ pub enum Event {
         revisions: Vec<Revision>,
     },
     Unresolved(Vec<Unresolved>),
+    Streams(Vec<Stream>),
+    /// Something worth saying that is not an error.
+    Notice(String),
     /// A write finished. Descriptions and the default changelist's very
     /// existence both come from the change lists, so everything is now stale.
     Changed,
@@ -423,6 +431,44 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                     }
                     Err(e) => {
                         let _ = events.send(Event::Error(format!("change: {e}")));
+                    }
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::Sync => {
+                let _ = events.send(Event::Log("sync".into()));
+                match p4.sync() {
+                    Ok(0) => {
+                        let _ = events.send(Event::Notice("already up to date".into()));
+                    }
+                    Ok(n) => {
+                        let _ = events.send(Event::Notice(format!("{n} file(s) updated")));
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("sync: {e}")));
+                    }
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::LoadStreams => {
+                let _ = events.send(Event::Log("streams".into()));
+                match p4.streams() {
+                    Ok(streams) => {
+                        let _ = events.send(Event::Streams(streams));
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("streams: {e}")));
+                    }
+                }
+            }
+            Request::SwitchStream { stream } => {
+                let _ = events.send(Event::Log(format!("switch {stream}")));
+                match p4.switch_stream(&stream) {
+                    Ok(()) => {
+                        let _ = events.send(Event::Notice(format!("switched to {stream}")));
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("switch: {e}")));
                     }
                 }
                 let _ = events.send(Event::Changed);

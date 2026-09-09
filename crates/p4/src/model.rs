@@ -218,6 +218,19 @@ pub struct Revision {
     pub description: String,
 }
 
+/// A stream, from `p4 streams`.
+#[derive(Debug, Clone)]
+pub struct Stream {
+    /// Depot path, e.g. `//darksim/main`.
+    pub path: String,
+    pub name: String,
+    /// `none` for a mainline.
+    pub parent: String,
+    /// `mainline`, `development`, `release`, `virtual`, `task`.
+    pub kind: String,
+    pub owner: String,
+}
+
 /// A file that cannot be submitted until it is resolved, from `p4 resolve -n`.
 #[derive(Debug, Clone)]
 pub struct Unresolved {

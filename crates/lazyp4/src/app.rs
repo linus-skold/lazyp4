@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, Revision, ServerInfo, Unresolved};
+use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, Revision, ServerInfo, Stream, Unresolved};
 
 use crate::editor::{Editor, Outcome};
 use crate::tree;
@@ -176,6 +176,8 @@ pub enum Modal {
     History,
     /// Files that must be resolved before they can be submitted.
     Resolve,
+    /// The depot's streams, and which one this workspace is on.
+    Streams,
 }
 
 pub struct App {
@@ -246,6 +248,12 @@ pub struct App {
     pub unresolved: Vec<Unresolved>,
     pub unresolved_sel: usize,
 
+    /// Streams in the depot, and the cursor within them.
+    pub streams: Vec<Stream>,
+    pub streams_sel: usize,
+    /// Something that went right, shown until something replaces it.
+    pub notice: Option<String>,
+
     /// Text each list panel is filtered by. Kept per panel so moving between
     /// them does not lose what you narrowed to.
     filters: HashMap<Panel, String>,
@@ -294,6 +302,9 @@ impl App {
             select_anchor: None,
             unresolved: Vec::new(),
             unresolved_sel: 0,
+            streams: Vec::new(),
+            streams_sel: 0,
+            notice: None,
             filters: HashMap::new(),
             filtering: None,
             diffs: Vec::new(),
@@ -549,6 +560,14 @@ impl App {
                     self.history = revisions;
                 }
             }
+            Event::Streams(streams) => {
+                self.streams = streams;
+                self.streams_sel = self.streams_sel.min(self.streams.len().saturating_sub(1));
+            }
+            Event::Notice(text) => {
+                self.notice = Some(text);
+                self.error = None;
+            }
             Event::Unresolved(files) => {
                 self.unresolved = files;
                 self.unresolved_sel = self
@@ -641,6 +660,7 @@ impl App {
                 KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::Help,
                 KeyCode::Char('H') if self.modal == Modal::History => self.modal = Modal::None,
                 _ if self.modal == Modal::Resolve => self.resolve_key(key.code),
+                _ if self.modal == Modal::Streams => self.streams_key(key.code),
                 KeyCode::Char('j') | KeyCode::Down if self.modal == Modal::History => {
                     self.history_scroll += 1;
                 }
@@ -681,6 +701,13 @@ impl App {
             KeyCode::Char('/') => self.start_filter(),
             KeyCode::Char('R') => self.show_unresolved(),
             KeyCode::Char('v') => self.toggle_range(),
+            KeyCode::Char('p') => {
+                self.busy = true;
+                self.error = None;
+                self.notice = None;
+                self.worker.send(Request::Sync);
+            }
+            KeyCode::Char('b') => self.show_streams(),
             // Esc drops a range without doing anything with it.
             KeyCode::Esc if self.select_anchor.is_some() => self.select_anchor = None,
             KeyCode::Char('u') => {
@@ -770,6 +797,58 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(PostCreate::Nothing));
+    }
+
+    /// The stream this workspace is on, if it is a stream client.
+    pub fn current_stream(&self) -> &str {
+        self.info
+            .as_ref()
+            .and_then(|i| i.stream.as_deref())
+            .unwrap_or_default()
+    }
+
+    fn show_streams(&mut self) {
+        self.modal = Modal::Streams;
+        self.error = None;
+        self.busy = true;
+        self.worker.send(Request::LoadStreams);
+    }
+
+    fn streams_key(&mut self, code: KeyCode) {
+        let count = self.streams.len();
+        match code {
+            KeyCode::Char('j') | KeyCode::Down if count > 0 => {
+                self.streams_sel = (self.streams_sel + 1).min(count - 1);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.streams_sel = self.streams_sel.saturating_sub(1);
+            }
+            KeyCode::Char('b') => self.modal = Modal::None,
+            KeyCode::Enter => self.switch_stream(),
+            _ => {}
+        }
+    }
+
+    fn switch_stream(&mut self) {
+        let Some(stream) = self.streams.get(self.streams_sel).cloned() else {
+            return;
+        };
+        if stream.path == self.current_stream() {
+            self.error = Some("already on that stream".into());
+            return;
+        }
+
+        self.ask(
+            format!("Switch to {}?", stream.path),
+            vec![
+                format!("{} ({})", stream.name, stream.kind),
+                String::new(),
+                "The workspace is resynced to match, which can move a lot of"
+                    .to_owned(),
+                "data. Perforce refuses while any file is open.".to_owned(),
+            ],
+            Request::SwitchStream { stream: stream.path },
+        );
     }
 
     /// Show what is waiting to be resolved.

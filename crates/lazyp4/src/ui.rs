@@ -53,6 +53,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::Log => draw_log(frame, app),
         Modal::History => draw_file_history(frame, app),
         Modal::Resolve => draw_resolve(frame, app),
+        Modal::Streams => draw_streams(frame, app),
     }
 
     // Drawn last so they sit above any overlay.
@@ -65,6 +66,67 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(confirm) = &app.confirm {
         draw_confirm(frame, confirm);
     }
+}
+
+fn draw_streams(frame: &mut Frame, app: &App) {
+    let current = app.current_stream();
+    let items: Vec<ListItem> = app
+        .streams
+        .iter()
+        .map(|s| {
+            let here = s.path == current;
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    if here { " ▸ " } else { "   " }.to_owned(),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    format!("{:<28.28} ", s.path),
+                    if here {
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    },
+                ),
+                Span::styled(format!("{:<12.12} ", s.kind), Style::default().fg(IDLE)),
+                Span::styled(s.parent.clone(), Style::default().fg(Color::DarkGray)),
+            ]))
+        })
+        .collect();
+
+    let area = frame.area();
+    let width = area.width.saturating_sub(8).min(80);
+    let height = (items.len().max(1) as u16 + 3).min(area.height.saturating_sub(2));
+    let area = centered(area, width, height);
+
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(FOCUS))
+        .title(Span::styled(
+            " Streams ",
+            Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " Enter switch   b close ",
+            Style::default().fg(IDLE),
+        ));
+
+    if app.streams.is_empty() {
+        frame.render_widget(
+            Paragraph::new(if app.busy { "  loading…" } else { "  no streams" })
+                .style(Style::default().fg(IDLE))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let mut state = ListState::default().with_selected(Some(app.streams_sel));
+    frame.render_stateful_widget(
+        List::new(items).block(block).highlight_style(selection_style(true)),
+        area,
+        &mut state,
+    );
 }
 
 fn draw_resolve(frame: &mut Frame, app: &App) {
@@ -785,6 +847,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             format!(" {} ", err.replace('\n', " ")),
             Style::default().fg(Color::White).bg(Color::Red),
         )),
+        (None, false) if app.notice.is_some() => Line::from(Span::styled(
+            format!(" {} ", app.notice.as_deref().unwrap_or_default()),
+            Style::default().fg(Color::Black).bg(Color::Green),
+        )),
         (None, true) => Line::from(Span::styled(
             " working… ",
             Style::default().fg(Color::Black).bg(FOCUS),
@@ -883,6 +949,8 @@ fn draw_help(frame: &mut Frame) {
             &[
                 ("enter", "fullscreen the diff"),
                 ("h / l", "scroll sideways"),
+                ("p", "sync the workspace"),
+                ("b", "streams"),
                 ("R", "resolve what is conflicting"),
                 ("r", "refresh"),
                 ("x", "the p4 command log"),

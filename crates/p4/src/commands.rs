@@ -315,6 +315,46 @@ impl Client {
         self.save_change_spec(&crate::spec::set_field(&form, "Description", description))
     }
 
+    /// Bring the workspace up to date, returning how many files changed.
+    ///
+    /// Files open for edit are left alone: Perforce refuses to overwrite them
+    /// rather than discarding work.
+    pub fn sync(&mut self) -> Result<usize> {
+        let out = self.run_raw("sync", &[], "")?;
+        match out.errors().cloned().collect::<Vec<_>>() {
+            // "File(s) up-to-date." arrives as a warning, and is not one.
+            msgs if msgs.iter().all(|m| m.text.contains("up-to-date")) => Ok(out.records.len()),
+            msgs => Err(Error::Server(msgs)),
+        }
+    }
+
+    /// Every stream in the depot.
+    pub fn streams(&mut self) -> Result<Vec<Stream>> {
+        let out = self.run("streams", &[])?;
+        Ok(out
+            .records
+            .iter()
+            .filter_map(|rec| {
+                Some(Stream {
+                    path: rec.field("Stream")?.to_owned(),
+                    name: rec.field("Name").unwrap_or_default().to_owned(),
+                    parent: rec.field("Parent").unwrap_or_default().to_owned(),
+                    kind: rec.field("Type").unwrap_or_default().to_owned(),
+                    owner: rec.field("Owner").unwrap_or_default().to_owned(),
+                })
+            })
+            .collect())
+    }
+
+    /// Point the workspace at another stream and resync it.
+    ///
+    /// Refused by the server while files are open, which is what stops this
+    /// from stranding work.
+    pub fn switch_stream(&mut self, stream: &str) -> Result<()> {
+        self.run("switch", &[stream])?;
+        Ok(())
+    }
+
     /// Files that must be resolved before they can be submitted.
     pub fn unresolved(&mut self) -> Result<Vec<Unresolved>> {
         // -n previews; without it `p4 resolve` is interactive and would sit
