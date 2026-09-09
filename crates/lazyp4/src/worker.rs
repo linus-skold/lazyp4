@@ -130,10 +130,13 @@ pub enum Request {
         how: Resolution,
         paths: Vec<String>,
     },
-    /// Open a reversal of a submitted change in a changelist of its own.
-    UndoChange {
-        change: ChangeId,
-        root: String,
+    /// Open a reversal of submitted work in a changelist of its own.
+    ///
+    /// `spec` is a path with a revision range: `//depot/main/...@=412` for a
+    /// whole changelist, `//depot/main/f.cpp#3` for one revision of one file.
+    Undo {
+        spec: String,
+        description: String,
     },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
@@ -428,16 +431,12 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 }
                 let _ = events.send(Event::Changed);
             }
-            Request::UndoChange { change, root } => {
+            Request::Undo { spec, description } => {
                 // The reversal needs somewhere to live, and putting it in its
                 // own changelist keeps it reviewable before it is submitted.
-                let _ = events.send(Event::Log(format!("change -i (undo of {change})")));
-                match both
-                    .untagged
-                    .create_change(&format!("Undo of change {change}"))
-                {
+                let _ = events.send(Event::Log(format!("change -i ({description})")));
+                match both.untagged.create_change(&description) {
                     Ok(into) => {
-                        let spec = format!("{root}/...@={change}");
                         let _ = events.send(Event::Log(format!("undo -c {into} {spec}")));
                         if let Err(e) = both.tagged.undo(into, &spec) {
                             let _ = events.send(Event::Error(format!("undo: {e}")));

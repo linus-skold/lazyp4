@@ -203,53 +203,68 @@ fn draw_resolve(frame: &mut Frame, app: &App) {
 }
 
 fn draw_file_history(frame: &mut Frame, app: &App) {
+    let items: Vec<ListItem> = app
+        .history
+        .iter()
+        .map(|r| {
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!(" #{:<4}", r.rev),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    format!("{:>8} ", r.change),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(
+                    format!("{:<10} ", r.time.map(p4::civil_date).unwrap_or_default()),
+                    Style::default().fg(IDLE),
+                ),
+                Span::styled(
+                    format!("{:<10.10} ", r.user),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("{:<8.8} ", r.action.to_string()),
+                    Style::default().fg(action_color(&r.action)),
+                ),
+                Span::raw(r.description.lines().next().unwrap_or_default().to_owned()),
+            ]))
+        })
+        .collect();
+
     let area = frame.area();
-    let height = area.height.saturating_sub(6).max(6);
     let width = area.width.saturating_sub(8);
+    let height = area.height.saturating_sub(6).max(6);
+    let area = centered(area, width, height);
 
-    let lines: Vec<Line> = if app.history.is_empty() {
-        vec![Line::from(Span::styled(
-            "  loading…",
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(FOCUS))
+        .title(Span::styled(
+            format!(" History of {} ", short_path(&app.history_path)),
+            Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " U undo this revision   H close ",
             Style::default().fg(IDLE),
-        ))]
-    } else {
-        app.history
-            .iter()
-            .skip(app.history_scroll)
-            .map(|r| {
-                Line::from(vec![
-                    Span::styled(
-                        format!(" #{:<4}", r.rev),
-                        Style::default().fg(Color::Green),
-                    ),
-                    Span::styled(
-                        format!("{:>8} ", r.change),
-                        Style::default().fg(Color::Cyan),
-                    ),
-                    Span::styled(
-                        format!("{:<10} ", r.time.map(p4::civil_date).unwrap_or_default()),
-                        Style::default().fg(IDLE),
-                    ),
-                    Span::styled(
-                        format!("{:<10.10} ", r.user),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled(
-                        format!("{:<8.8} ", r.action.to_string()),
-                        Style::default().fg(action_color(&r.action)),
-                    ),
-                    Span::raw(r.description.lines().next().unwrap_or_default().to_owned()),
-                ])
-            })
-            .collect()
-    };
+        ));
 
-    overlay(
-        frame,
-        &format!(" History of {} ", short_path(&app.history_path)),
-        lines,
-        width,
-        height,
+    if app.history.is_empty() {
+        frame.render_widget(
+            Paragraph::new("  loading…")
+                .style(Style::default().fg(IDLE))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let mut state = ListState::default().with_selected(Some(app.history_rev_sel));
+    frame.render_stateful_widget(
+        List::new(items).block(block).highlight_style(selection_style(true)),
+        area,
+        &mut state,
     );
 }
 
@@ -948,7 +963,7 @@ fn draw_help(frame: &mut Frame) {
                 ("s", "shelve just these"),
                 ("v", "select a range"),
                 ("h / l", "fold a directory"),
-                ("H", "revision history"),
+                ("H", "revision history, U to undo one"),
                 ("u", "scan for unopened changes (slow)"),
             ],
         ),

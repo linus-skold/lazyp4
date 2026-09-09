@@ -1372,11 +1372,75 @@ fn shift_u_undoes_a_submitted_change_into_a_new_changelist() {
     );
 
     press(&mut app, KeyCode::Char('y'));
-    let Some(Request::UndoChange { change, root }) = app.last_request() else {
+    let Some(Request::Undo { spec, description }) = app.last_request() else {
         panic!("expected an undo");
     };
-    assert_eq!(change, ChangeId::Number(396));
-    assert_eq!(root, "//darksim/main");
+    assert_eq!(spec, "//darksim/main/...@=396");
+    assert_eq!(description, "Undo of change 396");
+}
+
+#[test]
+fn shift_u_in_the_history_view_undoes_one_revision() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('H'));
+    app.handle(Event::History {
+        depot_path: "//darksim/main/AGENTS.md".into(),
+        revisions: vec![revision(7, 396, "# Updated .p4ignore"), revision(6, 390, "earlier")],
+    });
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('U'));
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Undo revision #7 of AGENTS.md?");
+    assert!(confirm.lines.iter().any(|l| l.contains("change 396")));
+
+    press(&mut app, KeyCode::Char('y'));
+    let Some(Request::Undo { spec, description }) = app.last_request() else {
+        panic!("expected an undo");
+    };
+    assert_eq!(spec, "//darksim/main/AGENTS.md#7");
+    assert_eq!(description, "Undo of //darksim/main/AGENTS.md#7");
+}
+
+#[test]
+fn the_history_view_undoes_the_revision_under_the_cursor() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('H'));
+    app.handle(Event::History {
+        depot_path: "//darksim/main/AGENTS.md".into(),
+        revisions: vec![revision(7, 396, "newest"), revision(6, 390, "earlier")],
+    });
+
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('U'));
+    press(&mut app, KeyCode::Char('y'));
+
+    let Some(Request::Undo { spec, .. }) = app.last_request() else {
+        panic!("expected an undo");
+    };
+    assert_eq!(spec, "//darksim/main/AGENTS.md#6");
+}
+
+#[test]
+fn the_first_revision_of_a_file_cannot_be_undone() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('H'));
+    app.handle(Event::History {
+        depot_path: "//darksim/main/AGENTS.md".into(),
+        revisions: vec![revision(1, 300, "added")],
+    });
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('U'));
+    assert!(app.confirm.is_none());
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("first revision")));
 }
 
 #[test]

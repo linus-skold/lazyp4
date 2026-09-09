@@ -143,13 +143,12 @@ What is left:
 
 Mostly done. Selecting a submitted changelist already points Files and Diff at
 it, `H` shows a file's revisions, and `U` undoes a submitted change into a new
-pending changelist.
+pending changelist. `U` inside the `H` view undoes one revision of one file
+instead, into a changelist of its own.
 
 What is left:
 
 - **Annotate.** `p4 annotate` is the blame equivalent and has no UI.
-- Undo covers a whole changelist. Undoing a single file revision from the `H`
-  panel would be the finer-grained version.
 
 ## G. Polish
 

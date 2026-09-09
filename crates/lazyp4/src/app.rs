@@ -244,7 +244,9 @@ pub struct App {
     /// Revision history of the file the History modal is showing.
     pub history: Vec<Revision>,
     pub history_path: String,
-    pub history_scroll: usize,
+    /// Cursor within those revisions. Distinct from `history_sel`, which is the
+    /// History *panel*'s cursor over submitted changelists.
+    pub history_rev_sel: usize,
 
     /// Where a range selection was started, if one is open. The range runs
     /// from here to the cursor, in either direction.
@@ -313,7 +315,7 @@ impl App {
             confirm: None,
             history: Vec::new(),
             history_path: String::new(),
-            history_scroll: 0,
+            history_rev_sel: 0,
             select_anchor: None,
             unresolved: Vec::new(),
             unresolved_sel: 0,
@@ -687,15 +689,9 @@ impl App {
                 // the help sheet rather than on a key of its own.
                 KeyCode::Char('x') if self.modal == Modal::Help => self.modal = Modal::Log,
                 KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::Help,
-                KeyCode::Char('H') if self.modal == Modal::History => self.modal = Modal::None,
+                _ if self.modal == Modal::History => self.history_key(key.code),
                 _ if self.modal == Modal::Resolve => self.resolve_key(key.code),
                 _ if self.modal == Modal::Streams => self.streams_key(key.code),
-                KeyCode::Char('j') | KeyCode::Down if self.modal == Modal::History => {
-                    self.history_scroll += 1;
-                }
-                KeyCode::Char('k') | KeyCode::Up if self.modal == Modal::History => {
-                    self.history_scroll = self.history_scroll.saturating_sub(1);
-                }
                 _ => {}
             }
             return;
@@ -1101,9 +1097,9 @@ impl App {
                 format!("Opens the reversal of {root}/... in a new changelist."),
                 "Nothing is submitted until you submit it.".to_owned(),
             ],
-            Request::UndoChange {
-                change: cl.id,
-                root,
+            Request::Undo {
+                spec: format!("{root}/...@={}", cl.id),
+                description: format!("Undo of change {}", cl.id),
             },
         );
     }
@@ -1122,11 +1118,58 @@ impl App {
             self.history.clear();
             self.history_path = depot_path.clone();
         }
-        self.history_scroll = 0;
+        self.history_rev_sel = 0;
         self.modal = Modal::History;
         self.error = None;
         self.busy = true;
         self.worker.send(Request::LoadHistory { depot_path });
+    }
+
+    /// Keys inside the revision-history view.
+    fn history_key(&mut self, code: KeyCode) {
+        let count = self.history.len();
+        match code {
+            KeyCode::Char('j') | KeyCode::Down if count > 0 => {
+                self.history_rev_sel = (self.history_rev_sel + 1).min(count - 1);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.history_rev_sel = self.history_rev_sel.saturating_sub(1);
+            }
+            KeyCode::Char('H') => self.modal = Modal::None,
+            KeyCode::Char('U') => self.undo_revision(),
+            _ => {}
+        }
+    }
+
+    /// Open a reversal of the one revision under the cursor.
+    ///
+    /// The finer-grained sibling of `U` on a submitted changelist: one file at
+    /// one revision, rather than everything that changelist touched.
+    fn undo_revision(&mut self) {
+        let Some(rev) = self.history.get(self.history_rev_sel) else {
+            return;
+        };
+        if rev.rev <= 1 {
+            // There is no earlier revision to put back.
+            self.error = Some("the first revision cannot be undone".into());
+            return;
+        }
+        let spec = format!("{}#{}", self.history_path, rev.rev);
+        let name = tree::relative(&self.history_path, &self.depot_root()).to_owned();
+
+        self.ask(
+            format!("Undo revision #{} of {name}?", rev.rev),
+            vec![
+                format!("change {}: {}", rev.change, first_line(&rev.description)),
+                String::new(),
+                format!("Opens the reversal of {spec} in a new changelist."),
+                "Nothing is submitted until you submit it.".to_owned(),
+            ],
+            Request::Undo {
+                description: format!("Undo of {spec}"),
+                spec,
+            },
+        );
     }
 
     /// Submit the selected changelist.
@@ -1743,6 +1786,11 @@ impl App {
 pub fn has_description(description: &str) -> bool {
     let text = description.trim();
     !text.is_empty() && text != "<saved by Perforce>"
+}
+
+/// First line of a description, for a one-line entry.
+fn first_line(description: &str) -> &str {
+    description.lines().next().unwrap_or_default().trim_end()
 }
 
 /// Marker shown beside a changelist in a list.
