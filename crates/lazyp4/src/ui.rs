@@ -163,14 +163,10 @@ fn draw_picker(frame: &mut Frame, picker: &Picker) {
     let area = centered(frame.area(), width, height);
 
     frame.render_widget(Clear, area);
-    let files = picker.files.len();
     let block = Block::bordered()
         .border_style(Style::default().fg(FOCUS))
         .title(Span::styled(
-            format!(
-                " Move {files} file{} to ",
-                if files == 1 { "" } else { "s" }
-            ),
+            format!(" {} ", picker.title),
             Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
@@ -708,8 +704,9 @@ fn panel_keys(panel: Panel) -> &'static [(&'static str, &'static str)] {
             ("u", "scan"),
         ],
         Panel::Changelists => &[
-            ("space", "move"),
             ("c", "submit"),
+            ("s", "shelve"),
+            ("S", "unshelve"),
             ("n", "new"),
             ("e", "describe"),
             ("d", "delete"),
@@ -741,6 +738,7 @@ fn draw_help(frame: &mut Frame) {
             &[
                 ("space", "move to / from the changelist"),
                 ("d", "revert, discarding local changes"),
+                ("s", "shelve just these"),
                 ("h / l", "fold a directory"),
                 ("H", "revision history"),
                 ("u", "scan for unopened changes (slow)"),
@@ -753,6 +751,9 @@ fn draw_help(frame: &mut Frame) {
                 ("e", "edit the description"),
                 ("c", "submit"),
                 ("d", "delete an empty one"),
+                ("s", "shelve to the server"),
+                ("S", "unshelve into another"),
+                ("D", "delete the shelf"),
                 ("U", "undo a submitted change"),
             ],
         ),

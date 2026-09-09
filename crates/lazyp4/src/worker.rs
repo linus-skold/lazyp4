@@ -55,6 +55,15 @@ impl FileEntry {
     }
 }
 
+/// What a freshly created changelist is for.
+#[derive(Debug, Clone)]
+pub enum PostCreate {
+    /// Nothing; an empty changelist.
+    Nothing,
+    Move(Vec<FileEntry>),
+    Unshelve(ChangeId),
+}
+
 pub enum Request {
     /// Reconnect and reload everything.
     Refresh,
@@ -70,11 +79,26 @@ pub enum Request {
         change: ChangeId,
         description: String,
     },
-    /// Create a changelist and move `files` into it, in one step so the UI
-    /// never has to hold a half-made changelist.
+    /// Create a changelist and fill it, in one step so the UI never has to
+    /// hold a half-made changelist.
     CreateChange {
         description: String,
+        then: PostCreate,
+    },
+    Shelve {
+        change: ChangeId,
+        /// Empty shelves the whole changelist.
         files: Vec<FileEntry>,
+    },
+    ReplaceShelf {
+        change: ChangeId,
+    },
+    DeleteShelf {
+        change: ChangeId,
+    },
+    Unshelve {
+        from: ChangeId,
+        into: ChangeId,
     },
     DeleteChange {
         change: ChangeId,
@@ -440,15 +464,57 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 }
                 let _ = events.send(Event::Changed);
             }
-            Request::CreateChange { description, files } => {
+            Request::CreateChange { description, then } => {
                 let _ = events.send(Event::Log("change -i (new)".into()));
                 match both.untagged.create_change(&description) {
-                    Ok(change) => {
-                        move_files(&mut both.tagged, &events, change, &files);
-                    }
+                    Ok(change) => match then {
+                        PostCreate::Nothing => {}
+                        PostCreate::Move(files) => {
+                            move_files(&mut both.tagged, &events, change, &files);
+                        }
+                        PostCreate::Unshelve(from) => {
+                            let _ = events
+                                .send(Event::Log(format!("unshelve -s {from} -c {change}")));
+                            if let Err(e) = both.tagged.unshelve(from, change) {
+                                let _ = events.send(Event::Error(format!("unshelve: {e}")));
+                            }
+                        }
+                    },
                     Err(e) => {
                         let _ = events.send(Event::Error(format!("change: {e}")));
                     }
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::Shelve { change, files } => {
+                let paths: Vec<&str> = files.iter().map(|f| f.command_path()).collect();
+                let _ = events.send(Event::Log(format!(
+                    "shelve -c {change} -f ({} files)",
+                    paths.len()
+                )));
+                if let Err(e) = p4.shelve(change, &paths) {
+                    let _ = events.send(Event::Error(format!("shelve: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::ReplaceShelf { change } => {
+                let _ = events.send(Event::Log(format!("shelve -r -c {change}")));
+                if let Err(e) = p4.replace_shelf(change) {
+                    let _ = events.send(Event::Error(format!("shelve -r: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::DeleteShelf { change } => {
+                let _ = events.send(Event::Log(format!("shelve -d -c {change}")));
+                if let Err(e) = p4.delete_shelf(change) {
+                    let _ = events.send(Event::Error(format!("shelve -d: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::Unshelve { from, into } => {
+                let _ = events.send(Event::Log(format!("unshelve -s {from} -c {into}")));
+                if let Err(e) = p4.unshelve(from, into) {
+                    let _ = events.send(Event::Error(format!("unshelve: {e}")));
                 }
                 let _ = events.send(Event::Changed);
             }

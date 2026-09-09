@@ -10,7 +10,7 @@ use ratatui::Terminal;
 
 use crate::app::{has_description, App, ChangeTab, Destination, FileRow, Modal, Panel};
 use crate::ui;
-use crate::worker::{Event, FileEntry, Request, Worker};
+use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
 
 const MINE: &str = "linus-desktop";
 
@@ -596,7 +596,7 @@ fn space_on_the_default_changelist_asks_where_to_move() {
     press(&mut app, KeyCode::Char(' '));
 
     let picker = app.picker.as_ref().expect("a picker should open");
-    assert_eq!(picker.files.len(), 1);
+    assert!(matches!(&picker.what, PostCreate::Move(files) if files.len() == 1));
     // Our numbered changelists, then the option of a new one.
     assert!(matches!(picker.options[0], Destination::Existing(id, _) if id == ChangeId::Number(395)));
     assert_eq!(picker.options.last(), Some(&Destination::New));
@@ -664,11 +664,158 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
     press(&mut app, KeyCode::Char('x'));
     press(&mut app, KeyCode::Enter);
 
-    let Some(Request::CreateChange { description, files }) = app.last_request() else {
+    let Some(Request::CreateChange { description, then }) = app.last_request() else {
         panic!("expected a create");
     };
     assert_eq!(description, "x");
+    let PostCreate::Move(files) = then else {
+        panic!("the new changelist should take the files");
+    };
     assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
+}
+
+/// Sitting on 166, the fixture's shelved changelist.
+fn on_shelved() -> App {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char(']')); // the Shelved tab
+    app.last_request();
+    app
+}
+
+#[test]
+fn s_shelves_a_changelist_that_has_no_shelf_yet() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('s'));
+
+    // Nothing is lost by shelving for the first time, so no confirmation.
+    assert!(app.confirm.is_none());
+    let Some(Request::Shelve { change, files }) = app.last_request() else {
+        panic!("expected a shelve");
+    };
+    assert_eq!(change, ChangeId::Number(395));
+    assert!(files.is_empty(), "the whole changelist");
+}
+
+#[test]
+fn s_on_an_existing_shelf_confirms_before_replacing_it() {
+    let mut app = on_shelved();
+    press(&mut app, KeyCode::Char('s'));
+
+    let confirm = app.confirm.as_ref().expect("replacing needs confirming");
+    assert_eq!(confirm.title, "Replace the shelf on 166?");
+    assert!(confirm.lines.iter().any(|l| l.contains("no longer open")));
+
+    press(&mut app, KeyCode::Char('y'));
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::ReplaceShelf { change }) if change == ChangeId::Number(166)
+    ));
+}
+
+#[test]
+fn s_in_files_shelves_only_the_selection() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('s'));
+
+    let Some(Request::Shelve { change, files }) = app.last_request() else {
+        panic!("expected a shelve");
+    };
+    assert_eq!(change, ChangeId::Number(395));
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].depot_path, "//darksim/main/AGENTS.md");
+}
+
+#[test]
+fn shift_s_unshelves_through_the_picker() {
+    let mut app = on_shelved();
+    press(&mut app, KeyCode::Char('S'));
+
+    let picker = app.picker.as_ref().expect("a destination is needed");
+    assert_eq!(picker.title, "Unshelve 166 into");
+    assert!(matches!(picker.what, PostCreate::Unshelve(id) if id == ChangeId::Number(166)));
+    assert!(
+        !picker.options.iter().any(
+            |o| matches!(o, Destination::Existing(id, _) if *id == ChangeId::Number(166))
+        ),
+        "unshelving into itself is not offered"
+    );
+
+    press(&mut app, KeyCode::Enter);
+    let Some(Request::Unshelve { from, into }) = app.last_request() else {
+        panic!("expected an unshelve");
+    };
+    assert_eq!(from, ChangeId::Number(166));
+    assert_eq!(into, ChangeId::Number(395));
+}
+
+#[test]
+fn unshelving_into_a_new_changelist_asks_for_a_description() {
+    let mut app = on_shelved();
+    press(&mut app, KeyCode::Char('S'));
+    press(&mut app, KeyCode::Char('G')); // the "new" row
+    press(&mut app, KeyCode::Enter);
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Enter);
+
+    let Some(Request::CreateChange { then, .. }) = app.last_request() else {
+        panic!("expected a create");
+    };
+    assert!(matches!(then, PostCreate::Unshelve(id) if id == ChangeId::Number(166)));
+}
+
+#[test]
+fn shift_d_deletes_a_shelf_after_confirming() {
+    let mut app = on_shelved();
+    press(&mut app, KeyCode::Char('D'));
+
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Delete the shelf on 166?");
+    assert!(confirm.lines.iter().any(|l| l.contains("Open files stay")));
+
+    press(&mut app, KeyCode::Char('y'));
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::DeleteShelf { change }) if change == ChangeId::Number(166)
+    ));
+}
+
+#[test]
+fn unshelving_and_deleting_need_something_shelved() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.last_request();
+
+    for key in ['S', 'D'] {
+        press(&mut app, KeyCode::Char(key));
+        assert!(app.picker.is_none() && app.confirm.is_none(), "{key}");
+        assert!(app.last_request().is_none(), "{key}");
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("nothing shelved")));
+    }
+}
+
+#[test]
+fn the_default_changelist_cannot_be_shelved() {
+    let mut app = on_default();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('s'));
+
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("numbered pending changelist")));
 }
 
 fn revision(rev: u32, change: u32, desc: &str) -> p4::Revision {
@@ -1017,11 +1164,14 @@ fn n_creates_an_empty_changelist() {
     press(&mut app, KeyCode::Char('x'));
     press(&mut app, KeyCode::Enter);
 
-    let Some(Request::CreateChange { description, files }) = app.last_request() else {
+    let Some(Request::CreateChange { description, then }) = app.last_request() else {
         panic!("expected a create");
     };
     assert_eq!(description, "x");
-    assert!(files.is_empty(), "nothing is moved into it");
+    assert!(
+        matches!(then, PostCreate::Nothing),
+        "nothing is moved into it"
+    );
 }
 
 #[test]

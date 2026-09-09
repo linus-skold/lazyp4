@@ -89,19 +89,22 @@ paths, via the folding tree; **5** discard, via `d` in Files.
 
 ## C. Shelving
 
-Perforce's answer to stash, and half-built already — the Shelved tab lists them
-and diffs them, but nothing can create or apply one.
+Done. `s` shelves, `S` unshelves through the destination picker, `D` deletes a
+shelf.
 
-| Need | Command |
-| --- | --- |
-| Shelve a changelist | `p4 shelve -c <cl>` |
-| Shelve selected files | `p4 shelve -c <cl> <files>` |
-| Unshelve into a changelist | `p4 unshelve -s <cl> -c <target>` |
-| Replace an existing shelf | `p4 shelve -r -c <cl>` |
-| Delete a shelf | `p4 shelve -d -c <cl>` |
+| Need | Command | State |
+| --- | --- | --- |
+| ~~Shelve a changelist~~ | `p4 shelve -c <cl> -f` | `s` in Changelists |
+| ~~Shelve selected files~~ | `p4 shelve -c <cl> -f <files>` | `s` in Files |
+| ~~Unshelve into a changelist~~ | `p4 unshelve -s <cl> -c <target>` | `S`, into an existing or new changelist |
+| ~~Replace an existing shelf~~ | `p4 shelve -r -c <cl>` | `s` on an already shelved changelist, confirmed |
+| ~~Delete a shelf~~ | `p4 shelve -d -c <cl>` | `D`, confirmed |
 
-Unshelving is how you move work between machines, so it should also accept a
-changelist from the Others tab.
+What is left:
+
+- Unshelving from the Others tab works, but a shelf on another user's
+  changelist often needs `-f`, which is not offered.
+- Deleting individual files from a shelf, rather than the whole shelf.
 
 ## D. Resolve
 
@@ -151,14 +154,15 @@ What is left:
 ## What is left, in order
 
 1. ~~**A**~~, ~~**B3**~~, ~~**B4**~~, ~~**B5**~~ — done. lazyp4 can finish a task.
-2. **B1** — multi-select, so every verb takes a range rather than one row.
-3. **C** — shelving, which completes a tab that today shows work you cannot act
-   on. Five commands and no new UI ideas, so the best value for its size.
-4. **B6**, **B7** — cheaper scan, filtering.
-5. **D** — resolve, which unblocks submit in the conflict case.
+2. ~~**C**~~ and ~~most of **F**~~ — done.
+3. **D** — resolve, which unblocks submit in the conflict case and is the
+   largest thing still missing.
+4. **B1** — multi-select, so every verb takes a range rather than one row.
+5. **B6**, **B7** — cheaper scan, filtering.
 6. **A leftovers** — routing a failed submit into D, submitting the default
    changelist, `p4 revert -n` as a stronger confirmation.
-7. **E**, **F**, **G**.
+7. **E** — streams and `p4 sync`, which has no equivalent at all.
+8. **G**, and the **F** leftovers.
 
 ## Non-goals
 

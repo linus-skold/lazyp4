@@ -7,7 +7,7 @@ use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Revision, ServerInfo};
 
 use crate::editor::{Editor, Outcome};
 use crate::tree;
-use crate::worker::{Event, FileEntry, Request, Worker};
+use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
 
 /// The panels, in tab order. The layout runs top to bottom down the left
 /// column, with the diff filling the right.
@@ -140,7 +140,9 @@ pub enum Destination {
 
 /// Choosing a changelist to move files into.
 pub struct Picker {
-    pub files: Vec<FileEntry>,
+    /// What is being placed into the chosen changelist.
+    pub what: PostCreate,
+    pub title: String,
     pub options: Vec<Destination>,
     pub sel: usize,
 }
@@ -160,8 +162,8 @@ pub struct Confirm {
 enum Editing {
     /// Rewrite an existing changelist's description.
     Description(ChangeId),
-    /// Describe a changelist that does not exist yet, then move these into it.
-    NewChange(Vec<FileEntry>),
+    /// Describe a changelist that does not exist yet, then fill it.
+    NewChange(PostCreate),
 }
 
 /// Which full-screen overlay is open, if any.
@@ -610,6 +612,10 @@ impl App {
             KeyCode::Char('c') => self.submit_changelist(),
             KeyCode::Char('H') => self.show_history(),
             KeyCode::Char('U') => self.undo_change(),
+            KeyCode::Char('s') if self.focus == Panel::Files => self.shelve_selected_files(),
+            KeyCode::Char('s') => self.shelve_changelist(),
+            KeyCode::Char('S') => self.unshelve_changelist(),
+            KeyCode::Char('D') => self.delete_shelf(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -696,7 +702,101 @@ impl App {
     fn new_changelist(&mut self) {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
-        self.editing = Some(Editing::NewChange(Vec::new()));
+        self.editing = Some(Editing::NewChange(PostCreate::Nothing));
+    }
+
+    /// Copy the selected changelist's open files to the server as a shelf.
+    fn shelve_changelist(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if cl.status == ChangeStatus::Submitted || cl.id == ChangeId::Default {
+            self.error = Some("only a numbered pending changelist can be shelved".into());
+            return;
+        }
+        if !self.is_mine(&cl) {
+            self.error = Some("that changelist belongs to somebody else".into());
+            return;
+        }
+
+        // Replacing drops files that were shelved but are no longer open, so
+        // it needs saying before it happens.
+        if cl.shelved {
+            self.ask(
+                format!("Replace the shelf on {}?", cl.id),
+                vec![
+                    cl.summary().to_owned(),
+                    String::new(),
+                    "Anything shelved but no longer open will be dropped.".to_owned(),
+                ],
+                Request::ReplaceShelf { change: cl.id },
+            );
+        } else {
+            self.busy = true;
+            self.error = None;
+            self.worker.send(Request::Shelve {
+                change: cl.id,
+                files: Vec::new(),
+            });
+        }
+    }
+
+    /// Shelve only the file or directory under the cursor.
+    fn shelve_selected_files(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if cl.status == ChangeStatus::Submitted || cl.id == ChangeId::Default {
+            self.error = Some("only a numbered pending changelist can be shelved".into());
+            return;
+        }
+        let files = self.selected_files();
+        if files.is_empty() {
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        self.worker.send(Request::Shelve {
+            change: cl.id,
+            files,
+        });
+    }
+
+    /// Open a shelf's files in another changelist, leaving the shelf alone.
+    fn unshelve_changelist(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if !cl.shelved {
+            self.error = Some("that changelist has nothing shelved".into());
+            return;
+        }
+        // Unshelving into its own changelist would be a no-op at best.
+        self.open_picker(
+            format!("Unshelve {} into", cl.id),
+            PostCreate::Unshelve(cl.id),
+            Some(cl.id),
+        );
+    }
+
+    /// Throw away a shelf.
+    fn delete_shelf(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if !cl.shelved {
+            self.error = Some("that changelist has nothing shelved".into());
+            return;
+        }
+        self.ask(
+            format!("Delete the shelf on {}?", cl.id),
+            vec![
+                cl.summary().to_owned(),
+                String::new(),
+                "The shelved copy on the server is lost. Open files stay.".to_owned(),
+            ],
+            Request::DeleteShelf { change: cl.id },
+        );
     }
 
     /// Open a reversal of the selected submitted change.
@@ -929,7 +1029,7 @@ impl App {
                 change,
                 description,
             },
-            Some(Editing::NewChange(files)) => Request::CreateChange { description, files },
+            Some(Editing::NewChange(then)) => Request::CreateChange { description, then },
             None => return,
         };
 
@@ -1016,7 +1116,12 @@ impl App {
         // Looking at the default changelist, there is no second group and so no
         // implied destination: ask which changelist to move into.
         if cl.id == ChangeId::Default {
-            self.open_picker(files);
+            let title = format!(
+                "Move {} file{} to",
+                files.len(),
+                if files.len() == 1 { "" } else { "s" }
+            );
+            self.open_picker(title, PostCreate::Move(files), None);
             return;
         }
 
@@ -1029,20 +1134,22 @@ impl App {
         });
     }
 
-    /// Offer the numbered changelists these files could move into, plus the
-    /// option of a new one.
-    fn open_picker(&mut self, files: Vec<FileEntry>) {
+    /// Offer the numbered changelists this could go into, plus a new one.
+    fn open_picker(&mut self, title: String, what: PostCreate, exclude: Option<ChangeId>) {
         let mut options: Vec<Destination> = self
             .pending
             .iter()
-            .filter(|cl| self.is_mine(cl) && cl.id != ChangeId::Default)
+            .filter(|cl| {
+                self.is_mine(cl) && cl.id != ChangeId::Default && Some(cl.id) != exclude
+            })
             .map(|cl| Destination::Existing(cl.id, cl.summary().to_owned()))
             .collect();
         options.push(Destination::New);
 
         self.error = None;
         self.picker = Some(Picker {
-            files,
+            what,
+            title,
             options,
             sel: 0,
         });
@@ -1072,16 +1179,18 @@ impl App {
         match picker.options.get(picker.sel).cloned() {
             Some(Destination::Existing(change, _)) => {
                 self.busy = true;
-                self.worker.send(Request::MoveFiles {
-                    change,
-                    files: picker.files,
-                });
+                let request = match picker.what {
+                    PostCreate::Move(files) => Request::MoveFiles { change, files },
+                    PostCreate::Unshelve(from) => Request::Unshelve { from, into: change },
+                    PostCreate::Nothing => return,
+                };
+                self.worker.send(request);
             }
             Some(Destination::New) => {
                 // A changelist cannot exist without a description, so ask for
                 // one before creating anything.
                 self.editor = Some(Editor::new("Description of the new changelist", ""));
-                self.editing = Some(Editing::NewChange(picker.files));
+                self.editing = Some(Editing::NewChange(picker.what));
             }
             None => {}
         }

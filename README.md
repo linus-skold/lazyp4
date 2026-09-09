@@ -142,6 +142,21 @@ you never described, and that counts as no description.
 the file or directory under the cursor, throwing away its local changes. `n`
 creates a new empty changelist.
 
+## Shelving
+
+A shelf is a copy of a changelist's open files kept on the server. It is how
+work moves between machines, and the closest Perforce comes to `git stash` —
+though the files stay open in your workspace.
+
+`s` shelves the selected changelist, or in the Files panel just the file or
+directory under the cursor. Shelving a changelist that already has a shelf
+replaces it, and asks first, because anything shelved but no longer open is
+dropped.
+
+`S` unshelves into another changelist — existing or created on the spot — and
+leaves the shelf alone, so the same shelf can be unshelved on several machines.
+`D` deletes the shelf, leaving the open files untouched.
+
 ## Editing a description
 
 `e` on a changelist opens its description in a popup. `Enter` saves, `Esc`
@@ -166,6 +181,9 @@ the changelist is left exactly as the server sent it.
 | `u` | scan for files that are changed but not open (slow) |
 | `Enter` | fold a directory, else give the diff the whole window (`Esc` to leave) |
 | `r` | refresh |
+| `s` | shelve — the changelist, or just the selected files |
+| `S` | unshelve into another changelist |
+| `D` | delete the shelf |
 | `H` | revision history of the selected file |
 | `U` | undo a submitted change into a new changelist |
 | `?` | help — every key, grouped; `x` from there opens the p4 command log |
