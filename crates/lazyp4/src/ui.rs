@@ -658,6 +658,7 @@ fn draw_help(frame: &mut Frame) {
         row("u".into(), "scan for untracked files (slow)".into()),
         row("e".into(), "edit the changelist description".into()),
         row("n".into(), "new changelist".into()),
+        row("c".into(), "submit the changelist".into()),
         row("d".into(), "revert files, or delete an empty changelist".into()),
         Line::raw(""),
     ];

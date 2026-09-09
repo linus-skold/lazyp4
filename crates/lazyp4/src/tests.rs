@@ -8,7 +8,7 @@ use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, ChangeTab, Destination, FileRow, Modal, Panel};
+use crate::app::{has_description, App, ChangeTab, Destination, FileRow, Modal, Panel};
 use crate::ui;
 use crate::worker::{Event, FileEntry, Request, Worker};
 
@@ -626,6 +626,89 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
 }
 
 #[test]
+fn c_submits_after_confirming_and_listing_the_files() {
+    let mut app = app();
+    app.last_request();
+    press(&mut app, KeyCode::Char('c'));
+
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Submit changelist 395 to the depot?");
+    assert!(confirm.lines.iter().any(|l| l.contains("AGENTS.md")));
+    assert!(confirm.lines.iter().any(|l| l.contains("Foo.cpp")));
+    assert!(app.last_request().is_none(), "nothing happens until y");
+
+    press(&mut app, KeyCode::Char('y'));
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::Submit { change }) if change == ChangeId::Number(395)
+    ));
+}
+
+#[test]
+fn a_changelist_without_a_real_description_is_not_submitted() {
+    // Perforce writes `<saved by Perforce>` itself; it is not a message.
+    assert!(!has_description("<saved by Perforce>"));
+    assert!(!has_description("   "));
+    assert!(has_description("# Do not submit"));
+
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char(']')); // the Shelved tab holds 166
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(app.confirm.is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("description")));
+}
+
+#[test]
+fn the_default_changelist_is_not_submitted_directly() {
+    let mut app = on_default();
+    press(&mut app, KeyCode::Char('c'));
+
+    assert!(app.confirm.is_none());
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("into a changelist")));
+}
+
+#[test]
+fn somebody_elses_changelist_is_not_submitted() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char(']'));
+    press(&mut app, KeyCode::Char(']')); // Others
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(app.confirm.is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("somebody else")));
+}
+
+#[test]
+fn an_already_submitted_changelist_is_not_submitted_again() {
+    let mut app = app();
+    app.focus = Panel::History;
+    press(&mut app, KeyCode::Char('g'));
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(app.confirm.is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("already submitted")));
+}
+
+#[test]
 fn d_in_files_reverts_after_confirming_and_naming_the_files() {
     let mut app = app();
     app.focus = Panel::Files;
@@ -1142,6 +1225,10 @@ fn key_release_events_are_ignored() {
 #[test]
 #[ignore = "prints the layout for inspection"]
 fn preview() {
+    let mut submitting = app();
+    press(&mut submitting, KeyCode::Char('c'));
+    println!("{}\n", render(&submitting, 92, 12));
+
     // Real tab-indented content, as captured from Darksim.Build.cs.
     let mut tabs = app();
     tabs.diffs = vec![FileDiff {

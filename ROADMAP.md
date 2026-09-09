@@ -44,25 +44,26 @@ exactly would produce something wrong.
 
 The core gap: you can arrange work but not finish it. Highest priority.
 
-| Need | Command | UI |
+Done. `n` creates, `c` submits, `d` deletes an empty changelist or reverts
+files, all behind a confirmation with no default answer.
+
+| Need | Command | State |
 | --- | --- | --- |
-| ~~Create a changelist~~ | `p4 change -i` with `Change: new` | Done, via the move picker. Still wants an `n` key in the Changelists panel for an empty one |
-| Submit | `p4 submit -c <cl>` | `S` (or `c`, matching lazygit's commit) with a confirmation showing every file |
-| Delete an empty changelist | `p4 change -d <cl>` | `d`, refusing while files remain |
-| Revert files | `p4 revert -c <cl> <files>` | `d` in Files, always confirmed — this is unrecoverable |
-| Move to a *new* changelist | create, then `reopen` | `Space` should be able to target a changelist that does not exist yet |
+| ~~Create a changelist~~ | `p4 change -i` with `Change: new` | `n`, and from the move picker |
+| ~~Submit~~ | `p4 submit -c <cl>` | `c`, confirmed |
+| ~~Delete an empty changelist~~ | `p4 change -d <cl>` | `d` in Changelists |
+| ~~Revert files~~ | `p4 revert <files>` | `d` in Files |
+| ~~Move to a *new* changelist~~ | create, then `reopen` | The move picker |
 
-Submit needs care:
+What is left here:
 
-- The description must be non-empty, and `<saved by Perforce>` should be
-  treated as empty — Perforce writes it for shelves and it is not a message.
-- Submit can fail because files need resolving. That error should route into the
-  resolve flow (D), not just print.
-- Submit is the one genuinely irreversible action here. A confirmation listing
-  the exact files, and no default-to-yes.
-
-Reverting is equally irreversible and deserves the same treatment. `p4 revert -k`
-and `-n` (preview) exist and are worth using to show what would be lost.
+- A submit that fails because files need resolving currently just reports the
+  server's message. It should route into the resolve flow (D).
+- Submitting is refused for the default changelist rather than supported.
+  `p4 submit` with no `-c` would do it, but the default changelist has no
+  description and would sweep in whatever else happens to be open.
+- Reverting uses the file list lazyp4 already holds. `p4 revert -n` previews
+  what the server would actually do and would be a stronger confirmation.
 
 ## B. The file flow
 
@@ -146,11 +147,11 @@ The History panel lists submitted changelists but does nothing with them.
 
 ## Suggested order
 
-1. **A** — create, submit, revert. Without these lazyp4 cannot finish a task.
-2. **B1–B3** — multi-select, move all, create-on-the-spot. These make A pleasant
-   rather than tedious.
+1. ~~**A**~~ and ~~**B3**, **B4**~~ — done. lazyp4 can now finish a task.
+2. **B1** — multi-select, so submit, revert and move all take a range rather
+   than one row. `Space` and `d` on a directory cover part of this already.
 3. **C** — shelving, which completes the tab that already exists.
-4. **B4–B7** — path display, discard, cheaper scan, filtering.
+4. **B5–B7** — cheaper scan, filtering.
 5. **D** — resolve, which unblocks submit in the conflict case.
 6. **E**, **F**, **G**.
 

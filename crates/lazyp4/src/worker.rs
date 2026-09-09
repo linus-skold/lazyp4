@@ -82,6 +82,9 @@ pub enum Request {
     RevertFiles {
         files: Vec<FileEntry>,
     },
+    Submit {
+        change: ChangeId,
+    },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
     MoveFiles {
@@ -358,6 +361,20 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 let _ = events.send(Event::Log(format!("change -o {change} | change -i")));
                 if let Err(e) = both.untagged.set_description(change, &description) {
                     let _ = events.send(Event::Error(format!("change: {e}")));
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::Submit { change } => {
+                let _ = events.send(Event::Log(format!("submit -c {change}")));
+                match p4.submit(change) {
+                    Ok(()) => {
+                        let _ = events.send(Event::Log(format!("{change} submitted")));
+                    }
+                    Err(e) => {
+                        // Most often "must resolve before submitting"; the
+                        // server's own wording is the most useful thing to show.
+                        let _ = events.send(Event::Error(format!("submit: {e}")));
+                    }
                 }
                 let _ = events.send(Event::Changed);
             }

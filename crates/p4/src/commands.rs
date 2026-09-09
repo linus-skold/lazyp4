@@ -315,6 +315,16 @@ impl Client {
         self.save_change_spec(&crate::spec::set_field(&form, "Description", description))
     }
 
+    /// Submit a pending changelist to the depot.
+    ///
+    /// Irreversible once it succeeds. It fails if any file needs resolving,
+    /// and the server's message says which.
+    pub fn submit(&mut self, change: ChangeId) -> Result<()> {
+        let id = change.to_string();
+        self.run("submit", &["-c", &id])?;
+        Ok(())
+    }
+
     /// Throw away the local changes to open files and close them.
     ///
     /// Irreversible: the workspace copy of an edited file is overwritten with

@@ -576,6 +576,7 @@ impl App {
             KeyCode::Char('n') => self.new_changelist(),
             KeyCode::Char('d') if self.focus == Panel::Changelists => self.delete_changelist(),
             KeyCode::Char('d') if self.focus == Panel::Files => self.revert_selected(),
+            KeyCode::Char('c') => self.submit_changelist(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -663,6 +664,51 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(Vec::new()));
+    }
+
+    /// Submit the selected changelist.
+    fn submit_changelist(&mut self) {
+        let Some(cl) = self.selected_change() else {
+            return;
+        };
+        if cl.status == ChangeStatus::Submitted {
+            self.error = Some("that changelist is already submitted".into());
+            return;
+        }
+        if cl.id == ChangeId::Default {
+            // The default changelist has no description, and submitting it
+            // would drop in whatever else happens to be open.
+            self.error =
+                Some("move these files into a changelist before submitting".into());
+            return;
+        }
+        if !self.is_mine(&cl) {
+            self.error = Some("that changelist belongs to somebody else".into());
+            return;
+        }
+        if !has_description(&cl.description) {
+            self.error = Some("give the changelist a description first (e)".into());
+            return;
+        }
+        if self.files_for == Some(cl.id) && self.files.is_empty() {
+            self.error = Some("that changelist has no files".into());
+            return;
+        }
+
+        let root = self.depot_root();
+        let mut lines: Vec<String> = self
+            .files
+            .iter()
+            .map(|f| format!("{} {}", f.action.code(), tree::relative(&f.depot_path, &root)))
+            .collect();
+        lines.push(String::new());
+        lines.push(cl.summary().to_owned());
+
+        self.ask(
+            format!("Submit changelist {} to the depot?", cl.id),
+            lines,
+            Request::Submit { change: cl.id },
+        );
     }
 
     /// Throw away the local changes to the selected file, or to everything
@@ -1091,6 +1137,15 @@ impl App {
     pub fn last_request(&self) -> Option<Request> {
         self.worker.last_request()
     }
+}
+
+/// Whether a description says anything.
+///
+/// Perforce writes `<saved by Perforce>` itself when it shelves work into a
+/// changelist you never described, so that placeholder counts as empty.
+pub fn has_description(description: &str) -> bool {
+    let text = description.trim();
+    !text.is_empty() && text != "<saved by Perforce>"
 }
 
 /// Marker shown beside a changelist in a list.

@@ -116,6 +116,32 @@ tens of seconds on a large tree, so it only runs when you ask.
 `Space` on a file that is not open yet opens it first — `add`, `edit` or
 `delete`, whichever reconciles it — and puts it straight into the changelist.
 
+## Finishing a changelist
+
+`c` submits the selected changelist, after a confirmation that lists every file
+going in:
+
+```text
+┌ Submit changelist 395 to the depot? ──────────┐
+│  A AGENTS.md                                  │
+│  M Foo.cpp                                    │
+│                                               │
+│  # Do not submit                              │
+└ y to confirm   any other key cancels ─────────┘
+```
+
+Confirmations have no default answer: only `y` proceeds, so a stray `Enter`
+cannot submit or discard anything.
+
+Submit is refused before it reaches the server when the changelist is the
+default one, belongs to somebody else, is already submitted, or has no real
+description — Perforce writes `<saved by Perforce>` itself when it shelves work
+you never described, and that counts as no description.
+
+`d` in the Changelists panel deletes an empty changelist; `d` in Files reverts
+the file or directory under the cursor, throwing away its local changes. `n`
+creates a new empty changelist.
+
 ## Editing a description
 
 `e` on a changelist opens its description in a popup. `Enter` saves, `Esc`
@@ -132,6 +158,9 @@ the changelist is left exactly as the server sent it.
 | `Tab`, `Shift-Tab` | cycle panels |
 | `[` `]` | switch tab within a panel |
 | `e` | edit the changelist description |
+| `n` | new changelist |
+| `c` | submit the changelist |
+| `d` | revert files (Files), delete an empty changelist (Changelists) |
 | `Space` | move a file, or a whole directory, in or out of the changelist |
 | `h` `l`, `←` `→` | fold and unfold a directory (Files), scroll the diff (Diff) |
 | `u` | scan for files that are changed but not open (slow) |
