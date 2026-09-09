@@ -6,7 +6,7 @@ members = ["crates/p4-sys", "crates/p4", "crates/lazyp4"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/linussko/lazyp4"
+repository = "https://github.com/linus-skold/lazyp4"
 
 [workspace.dependencies]
 cxx = "1.0"
