@@ -87,6 +87,11 @@ M    README.md
 directory moves every file beneath it, which is the quickest way to move a
 whole feature's worth of files at once.
 
+For files that are not neighbours, `v` starts a range: move the cursor to
+extend it, then `Space`, `d` or `s` acts on the lot. A directory inside the
+range brings its contents with it, and a file counted twice that way is only
+acted on once. `v` again or `Esc` abandons the range.
+
 With the **default** changelist selected there is no second group, and so no
 implied destination. `Space` there asks where the files should go:
 
@@ -199,7 +204,8 @@ the changelist is left exactly as the server sent it.
 | `n` | new changelist |
 | `c` | submit the changelist |
 | `d` | revert files (Files), delete an empty changelist (Changelists) |
-| `Space` | move a file, or a whole directory, in or out of the changelist |
+| `v` | start a range selection in Files |
+| `Space` | move a file, directory or range in or out of the changelist |
 | `h` `l`, `←` `→` | fold and unfold a directory (Files), scroll the diff (Diff) |
 | `u` | scan for files that are changed but not open (slow) |
 | `Enter` | fold a directory, else give the diff the whole window (`Esc` to leave) |

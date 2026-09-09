@@ -73,20 +73,20 @@ What is left here:
 
 ## B. The file flow
 
-Five of the seven are done. What is left:
+Six of the seven are done. What is left:
 
-- **B1. Multi-select.** lazygit stages a range with `v` then movement. Without
-  it, moving thirty scattered files is thirty keystrokes. Every verb — `Space`,
-  `d`, `s` — should take a selection, not one row.
 - **B2. Move all.** lazygit's `a` stages everything. `p4 reopen -c <cl> //...`
-  does it in one command. `Space` on a directory covers most of this already,
-  so it is only worth doing for the whole-workspace case.
+  does it in one command. `Space` on a directory, and now `v` over a range,
+  cover most of this, so it is only worth doing for the whole-workspace case.
 - **B6. A cheaper scan.** `u` walks the whole workspace. `p4 status -f <dir>`
   scoped to the selected file's directory would make it usable mid-task.
 
-Done: **B3** a target that does not exist yet, via the move picker; **B4**
-shorter paths, via the folding tree; **B5** discard, via `d` in Files; **B7**
-filtering, via `/` on any list panel.
+Done: **B1** multi-select, via `v` in Files; **B3** a target that does not exist
+yet, via the move picker; **B4** shorter paths, via the folding tree; **B5**
+discard, via `d` in Files; **B7** filtering, via `/` on any list panel.
+
+Multi-select is Files only. The resolve view still settles one file at a time,
+though `p4 resolve` would take several.
 
 ## C. Shelving
 
@@ -161,17 +161,21 @@ behind it.
 
 ## What is left, in order
 
-1. ~~**A**~~, ~~**C**~~, most of ~~**F**~~, and ~~**B3**–**B5**~~, ~~**B7**~~ —
-   done. lazyp4 can arrange, shelve and finish a task.
-2. Nothing here is blocking day to day work except a conflict, which is **D**.
-3. ~~**D**~~ — done, bar a merge tool for what `-am` refuses.
-4. **B1** — multi-select, so every verb takes a range rather than one row.
-   Resolving several files at once falls out of it.
-5. **B6** — a scan scoped to a directory, rather than the whole workspace.
-6. **A leftovers** — routing a failed submit into D, submitting the default
-   changelist, `p4 revert -n` as a stronger confirmation.
-7. **E** — streams and `p4 sync`, which has no equivalent at all.
-8. **G**, and the **F** leftovers.
+Done: **A**, **C**, **D**, most of **F**, and all of **B** but **B2** and
+**B6**. lazyp4 can arrange, shelve, resolve and finish a task.
+
+What remains, in the order it is worth doing:
+
+1. **E** — `p4 sync` above all. There is still no way to pull other people's
+   work into the workspace, which is the last thing that forces a drop to the
+   shell. Streams and `p4 switch` come with it.
+2. **A merge tool** for what `resolve -am` refuses. Needs the machinery for
+   leaving the alternate screen and coming back, which went with the external
+   diff viewer.
+3. **B6** — a scan scoped to a directory rather than the whole workspace.
+4. **A leftovers** — submitting the default changelist, and `p4 revert -n` as a
+   stronger confirmation.
+5. **G**, the **F** leftovers, and multi-select in the resolve view.
 
 ## Non-goals
 

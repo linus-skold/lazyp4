@@ -238,6 +238,10 @@ pub struct App {
     pub history_path: String,
     pub history_scroll: usize,
 
+    /// Where a range selection was started, if one is open. The range runs
+    /// from here to the cursor, in either direction.
+    pub select_anchor: Option<usize>,
+
     /// Files waiting to be resolved, and the cursor within them.
     pub unresolved: Vec<Unresolved>,
     pub unresolved_sel: usize,
@@ -287,6 +291,7 @@ impl App {
             history: Vec::new(),
             history_path: String::new(),
             history_scroll: 0,
+            select_anchor: None,
             unresolved: Vec::new(),
             unresolved_sel: 0,
             filters: HashMap::new(),
@@ -675,6 +680,9 @@ impl App {
             KeyCode::Char('D') => self.delete_shelf(),
             KeyCode::Char('/') => self.start_filter(),
             KeyCode::Char('R') => self.show_unresolved(),
+            KeyCode::Char('v') => self.toggle_range(),
+            // Esc drops a range without doing anything with it.
+            KeyCode::Esc if self.select_anchor.is_some() => self.select_anchor = None,
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -912,6 +920,7 @@ impl App {
         }
         self.busy = true;
         self.error = None;
+        self.select_anchor = None;
         self.worker.send(Request::Shelve {
             change: cl.id,
             files,
@@ -1139,6 +1148,9 @@ impl App {
     /// Put a question up before doing something that cannot be undone.
     fn ask(&mut self, title: String, lines: Vec<String>, request: Request) {
         self.error = None;
+        // The range has been read into the request; leaving it highlighted
+        // would suggest it is still pending.
+        self.select_anchor = None;
         self.confirm = Some(Confirm {
             title,
             lines,
@@ -1203,25 +1215,83 @@ impl App {
     /// Files the selected row stands for: one for a file, everything beneath
     /// it for a directory.
     fn selected_files(&self) -> Vec<FileEntry> {
-        match self.selected_row() {
-            Some(FileRow::File { index, .. }) => {
-                self.all_files().get(index).map(|f| (*f).clone()).into_iter().collect()
+        let (first, last) = self.selection_range();
+        let all = self.all_files();
+        let root = self.depot_root();
+
+        // A range can hold a directory and its own contents at once, so
+        // gather indexes and let the order of `all_files` settle duplicates.
+        let mut wanted: Vec<usize> = Vec::new();
+        for (i, row) in self
+            .file_rows()
+            .into_iter()
+            .filter(FileRow::selectable)
+            .enumerate()
+        {
+            if i < first || i > last {
+                continue;
             }
-            Some(FileRow::Dir { group, path, .. }) => {
-                let root = self.depot_root();
-                let prefix = format!("{path}/");
-                let source = match group {
-                    Group::InChange => &self.files,
-                    Group::Loose => &self.loose_files,
-                };
-                source
-                    .iter()
-                    .filter(|f| tree::relative(&f.depot_path, &root).starts_with(&prefix))
-                    .cloned()
-                    .collect()
+            match row {
+                FileRow::File { index, .. } => wanted.push(index),
+                FileRow::Dir { group, path, .. } => {
+                    let prefix = format!("{path}/");
+                    let offset = match group {
+                        Group::InChange => 0,
+                        Group::Loose => self.files.len(),
+                    };
+                    let source = match group {
+                        Group::InChange => &self.files,
+                        Group::Loose => &self.loose_files,
+                    };
+                    wanted.extend(
+                        source
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, f)| {
+                                tree::relative(&f.depot_path, &root).starts_with(&prefix)
+                            })
+                            .map(|(i, _)| offset + i),
+                    );
+                }
+                FileRow::Header(_) => {}
             }
-            _ => Vec::new(),
         }
+
+        wanted.sort_unstable();
+        wanted.dedup();
+        wanted
+            .into_iter()
+            .filter_map(|i| all.get(i).map(|f| (*f).clone()))
+            .collect()
+    }
+
+    /// The rows the next action will act on, as inclusive selectable indexes.
+    ///
+    /// Without an anchor that is just the cursor.
+    pub fn selection_range(&self) -> (usize, usize) {
+        match self.select_anchor {
+            Some(anchor) => (anchor.min(self.file_sel), anchor.max(self.file_sel)),
+            None => (self.file_sel, self.file_sel),
+        }
+    }
+
+    /// Whether a selectable row is inside the range.
+    pub fn row_selected(&self, index: usize) -> bool {
+        let (first, last) = self.selection_range();
+        self.select_anchor.is_some() && index >= first && index <= last
+    }
+
+    /// Start or abandon a range selection.
+    fn toggle_range(&mut self) {
+        if self.focus != Panel::Files {
+            self.error = Some("a range can only be selected in Files".into());
+            return;
+        }
+        self.error = None;
+        self.select_anchor = match self.select_anchor {
+            Some(_) => None,
+            None => Some(self.file_sel),
+        };
     }
 
     /// Expand or collapse the selected directory. Does nothing on a file.
@@ -1281,9 +1351,13 @@ impl App {
             return;
         }
 
+        // With a range spanning both groups the direction follows the cursor,
+        // which is where the eye is. Moving a file to where it already sits is
+        // harmless.
         let target = if loose { cl.id } else { ChangeId::Default };
         self.busy = true;
         self.error = None;
+        self.select_anchor = None;
         self.worker.send(Request::MoveFiles {
             change: target,
             files,

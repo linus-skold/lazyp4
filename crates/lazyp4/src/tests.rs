@@ -674,6 +674,119 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
     assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
 }
 
+#[test]
+fn v_selects_a_range_that_every_verb_then_acts_on() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    // Onto Door.cpp: Source/, Darksim/, Actors/, then the files.
+    for _ in 0..3 {
+        press(&mut app, KeyCode::Char('j'));
+    }
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('v'));
+    press(&mut app, KeyCode::Char('j')); // extend over Door.h
+    assert_eq!(app.selection_range(), (3, 4));
+
+    press(&mut app, KeyCode::Char('s'));
+    let Some(Request::Shelve { files, .. }) = app.last_request() else {
+        panic!("expected a shelve");
+    };
+    assert_eq!(files.len(), 2, "both rows, not just the cursor");
+}
+
+#[test]
+fn a_range_extends_upwards_too() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('G')); // the last row
+    let last = app.file_sel;
+
+    press(&mut app, KeyCode::Char('v'));
+    press(&mut app, KeyCode::Char('k'));
+    assert_eq!(app.selection_range(), (last - 1, last));
+}
+
+#[test]
+fn a_range_covering_a_directory_takes_its_contents_once() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    app.last_request();
+
+    // From Source/ down through Actors/ and both its files.
+    press(&mut app, KeyCode::Char('v'));
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Char('j'));
+    }
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('y'));
+
+    let Some(Request::RevertFiles { files }) = app.last_request() else {
+        panic!("expected a revert");
+    };
+    let paths: Vec<&str> = files.iter().map(|f| f.depot_path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "//darksim/main/Source/Darksim/Actors/Door.cpp",
+            "//darksim/main/Source/Darksim/Actors/Door.h",
+            "//darksim/main/Source/Editor/Tool.cpp",
+        ],
+        "a directory and its own files in one range must not double up"
+    );
+}
+
+#[test]
+fn the_range_is_dropped_once_it_has_been_acted_on() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('v'));
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('d'));
+
+    assert!(
+        app.select_anchor.is_none(),
+        "a highlighted range would suggest it is still pending"
+    );
+}
+
+#[test]
+fn v_again_or_esc_abandons_the_range() {
+    for key in [KeyCode::Char('v'), KeyCode::Esc] {
+        let mut app = nested();
+        app.focus = Panel::Files;
+        press(&mut app, KeyCode::Char('v'));
+        press(&mut app, KeyCode::Char('j'));
+        assert!(app.select_anchor.is_some());
+
+        press(&mut app, key);
+        assert!(app.select_anchor.is_none(), "{key:?}");
+        assert_eq!(app.selection_range().0, app.selection_range().1);
+    }
+}
+
+#[test]
+fn the_selected_range_is_shown() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('v'));
+    press(&mut app, KeyCode::Char('j'));
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("2 row(s) selected"), "{out}");
+    assert!(out.contains("v or Esc cancel"), "{out}");
+}
+
+#[test]
+fn a_range_only_makes_sense_in_the_files_panel() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('v'));
+
+    assert!(app.select_anchor.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("in Files")));
+}
+
 fn unresolved(path: &str) -> p4::Unresolved {
     p4::Unresolved {
         local_path: format!("E:\\ws{}", path.trim_start_matches("//darksim/main")),

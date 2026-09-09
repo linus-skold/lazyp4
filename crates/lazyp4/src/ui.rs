@@ -482,8 +482,10 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
                 if selectable == app.file_sel {
                     selected_row = Some(row);
                 }
+                let item = dir_item(label, *depth, *collapsed, *files);
+                let item = mark_range(item, app.row_selected(selectable));
                 selectable += 1;
-                dir_item(label, *depth, *collapsed, *files)
+                item
             }
             FileRow::File {
                 entry, label, depth, ..
@@ -491,8 +493,10 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
                 if selectable == app.file_sel {
                     selected_row = Some(row);
                 }
+                let item = file_item(entry, label, *depth);
+                let item = mark_range(item, app.row_selected(selectable));
                 selectable += 1;
-                file_item(entry, label, *depth)
+                item
             }
         })
         .collect();
@@ -505,6 +509,16 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         area,
         &mut state,
     );
+}
+
+/// Tint a row that is inside an open range selection. The cursor's own
+/// highlight is drawn over the top by the list widget.
+fn mark_range(item: ListItem<'static>, selected: bool) -> ListItem<'static> {
+    if selected {
+        item.style(Style::default().bg(Color::Blue).fg(Color::White))
+    } else {
+        item
+    }
 }
 
 /// Every row is laid out the same way: a three-column gutter holding the file's
@@ -747,6 +761,25 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // An open range changes what every verb will act on, so it takes the bar.
+    if app.select_anchor.is_some() {
+        let (first, last) = app.selection_range();
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" {} row(s) selected ", last - first + 1),
+                    Style::default().fg(Color::Black).bg(Color::Blue),
+                ),
+                Span::styled(
+                    "  space move   d revert   s shelve   v or Esc cancel",
+                    Style::default().fg(IDLE),
+                ),
+            ])),
+            area,
+        );
+        return;
+    }
+
     let line = match (&app.error, app.busy) {
         (Some(err), _) => Line::from(Span::styled(
             format!(" {} ", err.replace('\n', " ")),
@@ -826,6 +859,7 @@ fn draw_help(frame: &mut Frame) {
                 ("space", "move to / from the changelist"),
                 ("d", "revert, discarding local changes"),
                 ("s", "shelve just these"),
+                ("v", "select a range"),
                 ("h / l", "fold a directory"),
                 ("H", "revision history"),
                 ("u", "scan for unopened changes (slow)"),
