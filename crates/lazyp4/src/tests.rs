@@ -674,6 +674,113 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
     assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
 }
 
+fn unresolved(path: &str) -> p4::Unresolved {
+    p4::Unresolved {
+        local_path: format!("E:\\ws{}", path.trim_start_matches("//darksim/main")),
+        from_path: path.into(),
+        start_rev: Some(10),
+        end_rev: Some(12),
+        resolve_type: "content".into(),
+        content_type: "3waytext".into(),
+    }
+}
+
+/// The resolve view, open with one file waiting.
+fn resolving() -> App {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('R'));
+    app.handle(Event::Unresolved(vec![unresolved(
+        "//darksim/main/Config/DefaultEngine.ini",
+    )]));
+    app.last_request();
+    app
+}
+
+#[test]
+fn shift_r_lists_what_needs_resolving() {
+    let mut app = app();
+    app.last_request();
+    press(&mut app, KeyCode::Char('R'));
+
+    assert_eq!(app.modal, Modal::Resolve);
+    assert!(matches!(app.last_request(), Some(Request::LoadUnresolved)));
+
+    app.handle(Event::Unresolved(vec![unresolved(
+        "//darksim/main/Config/DefaultEngine.ini",
+    )]));
+    app.handle(Event::Idle);
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("1 file(s) to resolve"), "{out}");
+    assert!(out.contains("DefaultEngine.ini"), "{out}");
+    assert!(out.contains("3waytext"), "{out}");
+    assert!(out.contains("#10,#12"), "the range that arrived\n{out}");
+}
+
+#[test]
+fn an_empty_resolve_list_says_so_rather_than_looking_broken() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('R'));
+    app.handle(Event::Unresolved(Vec::new()));
+    app.handle(Event::Idle);
+
+    assert!(render(&app, 120, 40).contains("nothing to resolve"));
+}
+
+#[test]
+fn merging_needs_no_confirmation() {
+    // -am only succeeds where there is nothing to argue about.
+    let mut app = resolving();
+    press(&mut app, KeyCode::Char('m'));
+
+    assert!(app.confirm.is_none());
+    let Some(Request::Resolve { how, paths }) = app.last_request() else {
+        panic!("expected a resolve");
+    };
+    assert_eq!(how, p4::Resolution::Merge);
+    assert_eq!(paths.len(), 1);
+}
+
+#[test]
+fn taking_one_side_outright_is_confirmed_and_says_what_is_lost() {
+    let mut app = resolving();
+    press(&mut app, KeyCode::Char('y'));
+
+    let confirm = app.confirm.as_ref().expect("keeping yours discards theirs");
+    assert!(confirm.title.contains("Keep your copy"));
+    assert!(confirm.lines.iter().any(|l| l.contains("depot is discarded")));
+
+    press(&mut app, KeyCode::Char('y'));
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::Resolve { how, .. }) if how == p4::Resolution::Yours
+    ));
+
+    let mut app = resolving();
+    press(&mut app, KeyCode::Char('t'));
+    let confirm = app.confirm.as_ref().expect("taking theirs discards yours");
+    assert!(confirm.lines.iter().any(|l| l.contains("local changes are discarded")));
+}
+
+#[test]
+fn the_resolve_view_uses_the_local_path_perforce_expects() {
+    let mut app = resolving();
+    press(&mut app, KeyCode::Char('a'));
+
+    let Some(Request::Resolve { paths, .. }) = app.last_request() else {
+        panic!("expected a resolve");
+    };
+    assert!(paths[0].starts_with("E:\\ws"), "{:?}", paths);
+}
+
+#[test]
+fn the_resolve_view_closes_without_quitting() {
+    let mut app = resolving();
+    press(&mut app, KeyCode::Char('R'));
+    assert_eq!(app.modal, Modal::None);
+    assert!(!app.quit);
+}
+
 fn type_filter(app: &mut App, text: &str) {
     press(app, KeyCode::Char('/'));
     for c in text.chars() {

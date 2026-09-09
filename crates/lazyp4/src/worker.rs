@@ -10,7 +10,7 @@ use std::thread;
 
 use p4::{
     diff, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection, FileAction,
-    FileDiff, Revision, ServerInfo,
+    FileDiff, Resolution, Revision, ServerInfo, Unresolved,
 };
 
 /// A file in a changelist, from whichever command could see it.
@@ -112,6 +112,11 @@ pub enum Request {
     LoadHistory {
         depot_path: String,
     },
+    LoadUnresolved,
+    Resolve {
+        how: Resolution,
+        paths: Vec<String>,
+    },
     /// Open a reversal of a submitted change in a changelist of its own.
     UndoChange {
         change: ChangeId,
@@ -158,6 +163,7 @@ pub enum Event {
         depot_path: String,
         revisions: Vec<Revision>,
     },
+    Unresolved(Vec<Unresolved>),
     /// A write finished. Descriptions and the default changelist's very
     /// existence both come from the change lists, so everything is now stale.
     Changed,
@@ -421,6 +427,30 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 }
                 let _ = events.send(Event::Changed);
             }
+            Request::LoadUnresolved => {
+                let _ = events.send(Event::Log("resolve -n".into()));
+                match p4.unresolved() {
+                    Ok(files) => {
+                        let _ = events.send(Event::Unresolved(files));
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("resolve -n: {e}")));
+                    }
+                }
+            }
+            Request::Resolve { how, paths } => {
+                let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                let _ = events.send(Event::Log(format!(
+                    "resolve {} ({} files)",
+                    how.flag(),
+                    paths.len()
+                )));
+                if let Err(e) = p4.resolve(how, &paths) {
+                    let _ = events.send(Event::Error(format!("resolve: {e}")));
+                }
+                // The list of what is left, and the diffs, both move.
+                let _ = events.send(Event::Changed);
+            }
             Request::LoadHistory { depot_path } => {
                 let _ = events.send(Event::Log(format!("filelog -l -m 50 {depot_path}")));
                 match p4.filelog(&depot_path, Some(50)) {
@@ -442,9 +472,15 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                         let _ = events.send(Event::Log(format!("{change} submitted")));
                     }
                     Err(e) => {
-                        // Most often "must resolve before submitting"; the
-                        // server's own wording is the most useful thing to show.
-                        let _ = events.send(Event::Error(format!("submit: {e}")));
+                        // Much the most common failure is an unresolved file.
+                        // Say which key opens the view that fixes it.
+                        let message = e.to_string();
+                        let hint = if message.to_lowercase().contains("resolve") {
+                            " — press R to resolve"
+                        } else {
+                            ""
+                        };
+                        let _ = events.send(Event::Error(format!("submit: {message}{hint}")));
                     }
                 }
                 let _ = events.send(Event::Changed);

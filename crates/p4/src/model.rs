@@ -218,6 +218,51 @@ pub struct Revision {
     pub description: String,
 }
 
+/// A file that cannot be submitted until it is resolved, from `p4 resolve -n`.
+#[derive(Debug, Clone)]
+pub struct Unresolved {
+    /// Where the file sits on disk.
+    pub local_path: String,
+    /// The depot side being merged in.
+    pub from_path: String,
+    /// The revision range that arrived while the file was open.
+    pub start_rev: Option<u32>,
+    pub end_rev: Option<u32>,
+    /// `content`, `branch`, `delete`, and so on.
+    pub resolve_type: String,
+    /// How the two sides differ. `3waytext` is an ordinary edit collision.
+    pub content_type: String,
+}
+
+/// How to settle an unresolved file without opening a merge tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolution {
+    /// Keep the workspace copy, discarding what arrived.
+    Yours,
+    /// Take the depot copy, discarding local changes.
+    Theirs,
+    /// Merge, which fails on a real conflict rather than guessing.
+    Merge,
+    /// Only where a single side changed; leaves conflicts alone.
+    Safe,
+}
+
+impl Resolution {
+    pub fn flag(self) -> &'static str {
+        match self {
+            Resolution::Yours => "-ay",
+            Resolution::Theirs => "-at",
+            Resolution::Merge => "-am",
+            Resolution::Safe => "-as",
+        }
+    }
+
+    /// True when settling this way throws one side away.
+    pub fn discards(self) -> bool {
+        matches!(self, Resolution::Yours | Resolution::Theirs)
+    }
+}
+
 /// Format a server timestamp as `YYYY-MM-DD`.
 ///
 /// Hinnant's civil-from-days, so no date crate is needed for the one thing

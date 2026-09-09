@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Revision, ServerInfo};
+use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, Revision, ServerInfo, Unresolved};
 
 use crate::editor::{Editor, Outcome};
 use crate::tree;
@@ -174,6 +174,8 @@ pub enum Modal {
     Log,
     /// Revision history of one file.
     History,
+    /// Files that must be resolved before they can be submitted.
+    Resolve,
 }
 
 pub struct App {
@@ -236,6 +238,10 @@ pub struct App {
     pub history_path: String,
     pub history_scroll: usize,
 
+    /// Files waiting to be resolved, and the cursor within them.
+    pub unresolved: Vec<Unresolved>,
+    pub unresolved_sel: usize,
+
     /// Text each list panel is filtered by. Kept per panel so moving between
     /// them does not lose what you narrowed to.
     filters: HashMap<Panel, String>,
@@ -281,6 +287,8 @@ impl App {
             history: Vec::new(),
             history_path: String::new(),
             history_scroll: 0,
+            unresolved: Vec::new(),
+            unresolved_sel: 0,
             filters: HashMap::new(),
             filtering: None,
             diffs: Vec::new(),
@@ -536,6 +544,12 @@ impl App {
                     self.history = revisions;
                 }
             }
+            Event::Unresolved(files) => {
+                self.unresolved = files;
+                self.unresolved_sel = self
+                    .unresolved_sel
+                    .min(self.unresolved.len().saturating_sub(1));
+            }
             Event::Scanned(files) => {
                 self.scanning = false;
                 self.scanned = files;
@@ -621,6 +635,7 @@ impl App {
                 KeyCode::Char('x') if self.modal == Modal::Help => self.modal = Modal::Log,
                 KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::Help,
                 KeyCode::Char('H') if self.modal == Modal::History => self.modal = Modal::None,
+                _ if self.modal == Modal::Resolve => self.resolve_key(key.code),
                 KeyCode::Char('j') | KeyCode::Down if self.modal == Modal::History => {
                     self.history_scroll += 1;
                 }
@@ -659,6 +674,7 @@ impl App {
             KeyCode::Char('S') => self.unshelve_changelist(),
             KeyCode::Char('D') => self.delete_shelf(),
             KeyCode::Char('/') => self.start_filter(),
+            KeyCode::Char('R') => self.show_unresolved(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -746,6 +762,62 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(PostCreate::Nothing));
+    }
+
+    /// Show what is waiting to be resolved.
+    fn show_unresolved(&mut self) {
+        self.unresolved_sel = 0;
+        self.modal = Modal::Resolve;
+        self.error = None;
+        self.busy = true;
+        self.worker.send(Request::LoadUnresolved);
+    }
+
+    /// Keys inside the resolve view.
+    fn resolve_key(&mut self, code: KeyCode) {
+        let count = self.unresolved.len();
+        match code {
+            KeyCode::Char('j') | KeyCode::Down if count > 0 => {
+                self.unresolved_sel = (self.unresolved_sel + 1).min(count - 1);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.unresolved_sel = self.unresolved_sel.saturating_sub(1);
+            }
+            KeyCode::Char('R') => self.modal = Modal::None,
+            KeyCode::Char('y') => self.settle(Resolution::Yours),
+            KeyCode::Char('t') => self.settle(Resolution::Theirs),
+            KeyCode::Char('m') => self.settle(Resolution::Merge),
+            KeyCode::Char('a') => self.settle(Resolution::Safe),
+            _ => {}
+        }
+    }
+
+    /// Resolve the file under the cursor.
+    fn settle(&mut self, how: Resolution) {
+        let Some(file) = self.unresolved.get(self.unresolved_sel) else {
+            return;
+        };
+        let paths = vec![file.local_path.clone()];
+        let name = tree::relative(&file.from_path, &self.depot_root()).to_owned();
+
+        // Merging only succeeds where there is nothing to argue about, so it
+        // needs no warning. Taking one side outright does.
+        if !how.discards() {
+            self.busy = true;
+            self.error = None;
+            self.worker.send(Request::Resolve { how, paths });
+            return;
+        }
+
+        let (title, lost) = match how {
+            Resolution::Yours => ("Keep your copy", "What arrived from the depot is discarded."),
+            _ => ("Take the depot copy", "Your local changes are discarded."),
+        };
+        self.ask(
+            format!("{title} of {name}?"),
+            vec![lost.to_owned()],
+            Request::Resolve { how, paths },
+        );
     }
 
     /// Start narrowing the focused list.

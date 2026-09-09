@@ -109,14 +109,19 @@ What is left:
 
 ## D. Resolve
 
-lazygit has a dedicated merge-conflict view. Perforce needs the same, and
-`p4 submit` will keep failing until it exists.
+Mostly done. `R` lists what `p4 resolve -n` reports, in its own view, and
+settles a file four ways: `y` yours, `t` theirs, `m` merge, `a` safe. Taking
+one side outright is confirmed and says which side is lost; merging is not,
+since `-am` fails rather than guessing. A submit that fails on an unresolved
+file now points at `R`.
 
-- List what needs resolving: `p4 resolve -n`.
-- Accept a whole file: `p4 resolve -ay` (yours), `-at` (theirs), `-am` (merge).
-- Anything genuinely conflicted should hand off to `P4MERGE` rather than trying
-  to build a three-way merge editor in the TUI.
-- This is stateful and interactive; it needs its own sub-mode, not a keystroke.
+What is left:
+
+- **A merge tool.** Anything `-am` refuses still has nowhere to go. Handing off
+  to `P4MERGE` means leaving the alternate screen and coming back, which is the
+  machinery that went with the external diff viewer.
+- Resolving one file at a time. `p4 resolve` accepts several paths, so this
+  falls out of multi-select (B1).
 
 ## E. Streams and branches
 
@@ -159,9 +164,9 @@ behind it.
 1. ~~**A**~~, ~~**C**~~, most of ~~**F**~~, and ~~**B3**–**B5**~~, ~~**B7**~~ —
    done. lazyp4 can arrange, shelve and finish a task.
 2. Nothing here is blocking day to day work except a conflict, which is **D**.
-3. **D** — resolve, which unblocks submit in the conflict case and is the
-   largest thing still missing.
+3. ~~**D**~~ — done, bar a merge tool for what `-am` refuses.
 4. **B1** — multi-select, so every verb takes a range rather than one row.
+   Resolving several files at once falls out of it.
 5. **B6** — a scan scoped to a directory, rather than the whole workspace.
 6. **A leftovers** — routing a failed submit into D, submitting the default
    changelist, `p4 revert -n` as a stronger confirmation.

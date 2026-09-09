@@ -52,6 +52,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::Help => draw_help(frame),
         Modal::Log => draw_log(frame, app),
         Modal::History => draw_file_history(frame, app),
+        Modal::Resolve => draw_resolve(frame, app),
     }
 
     // Drawn last so they sit above any overlay.
@@ -64,6 +65,67 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(confirm) = &app.confirm {
         draw_confirm(frame, confirm);
     }
+}
+
+fn draw_resolve(frame: &mut Frame, app: &App) {
+    let root = app.depot_root();
+    let items: Vec<ListItem> = app
+        .unresolved
+        .iter()
+        .map(|u| {
+            let revs = match (u.start_rev, u.end_rev) {
+                (Some(a), Some(b)) => format!("#{a},#{b}"),
+                _ => String::new(),
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!(" {:<9.9} ", u.content_type),
+                    Style::default().fg(Color::Magenta),
+                ),
+                Span::styled(format!("{revs:<9} "), Style::default().fg(IDLE)),
+                Span::raw(short_path(&crate::tree::relative(&u.from_path, &root)).to_owned()),
+            ]))
+        })
+        .collect();
+
+    let area = frame.area();
+    let width = area.width.saturating_sub(8);
+    let height = (items.len().max(1) as u16 + 3).min(area.height.saturating_sub(2));
+    let area = centered(area, width, height);
+
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(Color::Red))
+        .title(Span::styled(
+            format!(" {} file(s) to resolve ", app.unresolved.len()),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " y yours   t theirs   m merge   a safe   R close ",
+            Style::default().fg(IDLE),
+        ));
+
+    if app.unresolved.is_empty() {
+        let message = if app.busy {
+            "checking…"
+        } else {
+            "nothing to resolve"
+        };
+        frame.render_widget(
+            Paragraph::new(format!("  {message}"))
+                .style(Style::default().fg(IDLE))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let mut state = ListState::default().with_selected(Some(app.unresolved_sel));
+    frame.render_stateful_widget(
+        List::new(items).block(block).highlight_style(selection_style(true)),
+        area,
+        &mut state,
+    );
 }
 
 fn draw_file_history(frame: &mut Frame, app: &App) {
@@ -787,6 +849,7 @@ fn draw_help(frame: &mut Frame) {
             &[
                 ("enter", "fullscreen the diff"),
                 ("h / l", "scroll sideways"),
+                ("R", "resolve what is conflicting"),
                 ("r", "refresh"),
                 ("x", "the p4 command log"),
                 ("q", "quit"),

@@ -157,6 +157,28 @@ dropped.
 leaves the shelf alone, so the same shelf can be unshelved on several machines.
 `D` deletes the shelf, leaving the open files untouched.
 
+## Resolving
+
+A file that changed in the depot while you had it open cannot be submitted
+until it is resolved. `R` lists what is outstanding:
+
+```text
+┌ 1 file(s) to resolve ──────────────────────────┐
+│ 3waytext  #10,#12   darksim/main/Config/…ini   │
+└ y yours   t theirs   m merge   a safe   R close┘
+```
+
+| Key | Meaning |
+| --- | --- |
+| `y` | keep your copy, discarding what arrived |
+| `t` | take the depot copy, discarding your changes |
+| `m` | merge, which fails rather than guessing at a conflict |
+| `a` | safe — only where a single side changed |
+
+`y` and `t` throw one side away, so both ask first. `m` and `a` do not: they
+refuse rather than guess. A submit that fails because of an unresolved file
+says so and points at `R`.
+
 ## Editing a description
 
 `e` on a changelist opens its description in a popup. `Enter` saves, `Esc`
@@ -185,6 +207,7 @@ the changelist is left exactly as the server sent it.
 | `s` | shelve — the changelist, or just the selected files |
 | `S` | unshelve into another changelist |
 | `D` | delete the shelf |
+| `R` | resolve files that changed in the depot while open |
 | `H` | revision history of the selected file |
 | `U` | undo a submitted change into a new changelist |
 | `?` | help — every key, grouped; `x` from there opens the p4 command log |
