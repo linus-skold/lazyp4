@@ -34,12 +34,21 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(42), Constraint::Min(0)]).areas(body);
-    // Status is fixed; the three lists share what is left.
+    // Status is fixed; the three lists share what is left. Zooming gives the
+    // focused one nearly all of it rather than hiding the others outright, so
+    // the column still reads as a column.
+    let weight = |panel: Panel| -> Constraint {
+        match (app.zoom, app.focus == panel) {
+            (true, true) => Constraint::Fill(12),
+            (true, false) => Constraint::Length(3),
+            _ => Constraint::Fill(1),
+        }
+    };
     let [status, files, changes, history] = Layout::vertical([
         Constraint::Length(6),
-        Constraint::Fill(1),
-        Constraint::Fill(1),
-        Constraint::Fill(1),
+        weight(Panel::Files),
+        weight(Panel::Changelists),
+        weight(Panel::History),
     ])
     .areas(left);
 
@@ -925,6 +934,7 @@ fn draw_help(frame: &mut Frame) {
         ("Tab", "cycle panels"),
         ("[ ]", "switch tab"),
         ("/", "narrow the list"),
+        ("+ _", "zoom a panel"),
     ];
     navigation.extend(panels.iter().map(|(n, t)| (n.as_str(), *t)));
 

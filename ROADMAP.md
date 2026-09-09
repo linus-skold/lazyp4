@@ -155,15 +155,14 @@ What is left:
 
 ## G. Polish
 
-- `+`/`_` to zoom a panel, as lazygit does. `Enter` already fullscreens the diff.
 - A config file for theme, keybindings and the diff tab width, which is fixed
   at four.
-- Progress for slow commands. `u` takes ~40 s and the UI only says "working".
 - Auto-refresh after external `p4` use.
 - `.p4ignore` editing, matching lazygit's `i`.
 
-Done: `/` filtering, and a help sheet grouped by panel with the command log
-behind it.
+Done: `/` filtering; a help sheet grouped by panel with the command log behind
+it; `+`/`_` to zoom a panel; and the running command named beside a spinner
+rather than a bare "working".
 
 ## What is left, in order
 
@@ -176,9 +175,7 @@ What remains, in the order it is worth doing:
 1. **A merge tool** for what `resolve -am` refuses. Needs the machinery for
    leaving the alternate screen and coming back, which went with the external
    diff viewer. Until then a real conflict has nowhere to go.
-2. **G's progress reporting.** `u` takes ~40 s and a large sync far longer,
-   with nothing on screen but "working".
-3. **B6** — a scan scoped to a directory rather than the whole workspace.
+2. **B6** — a scan scoped to a directory rather than the whole workspace.
 4. **A leftovers** — submitting the default changelist, and `p4 revert -n` as a
    stronger confirmation.
 5. The rest of **G**, the **F** leftovers, and multi-select in the resolve

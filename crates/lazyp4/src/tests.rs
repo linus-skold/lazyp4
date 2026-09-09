@@ -685,6 +685,36 @@ fn stream(path: &str, kind: &str) -> p4::Stream {
 }
 
 #[test]
+fn plus_gives_the_focused_panel_most_of_the_column() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    let before = render(&app, 100, 24);
+
+    press(&mut app, KeyCode::Char('+'));
+    let zoomed = render(&app, 100, 24);
+    assert_ne!(before, zoomed);
+    // Everything in the tree fits once the other panels give up their rows.
+    assert!(zoomed.contains("Tool.cpp"), "{zoomed}");
+    assert!(zoomed.contains("README.md"), "{zoomed}");
+    // The other panels are still there, just narrow.
+    assert!(zoomed.contains("Changelists"), "{zoomed}");
+
+    press(&mut app, KeyCode::Char('_'));
+    assert_eq!(render(&app, 100, 24), before, "and back again");
+}
+
+#[test]
+fn zoom_follows_the_focused_panel() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('+'));
+    let on_files = render(&app, 100, 24);
+
+    app.focus = Panel::History;
+    assert_ne!(render(&app, 100, 24), on_files);
+}
+
+#[test]
 fn a_running_command_is_named_rather_than_just_working() {
     let mut app = app();
     app.handle(Event::Log("status".into()));
@@ -2066,6 +2096,11 @@ fn key_release_events_are_ignored() {
 #[test]
 #[ignore = "prints the layout for inspection"]
 fn preview() {
+    let mut zoomed = nested();
+    zoomed.focus = Panel::Files;
+    press(&mut zoomed, KeyCode::Char('+'));
+    println!("{}\n", render(&zoomed, 92, 22));
+
     let mut filtering = nested();
     filtering.focus = Panel::Files;
     type_filter(&mut filtering, "door");

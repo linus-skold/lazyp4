@@ -260,6 +260,9 @@ pub struct App {
     /// The panel whose filter is being typed, if any.
     pub filtering: Option<Panel>,
 
+    /// Give the focused left-hand panel the whole column.
+    pub zoom: bool,
+
     /// Advances while a command is in flight, so the spinner turns.
     pub spinner: usize,
 
@@ -308,6 +311,7 @@ impl App {
             streams: Vec::new(),
             streams_sel: 0,
             notice: None,
+            zoom: false,
             spinner: 0,
             filters: HashMap::new(),
             filtering: None,
@@ -722,6 +726,9 @@ impl App {
                 self.worker.send(Request::Sync);
             }
             KeyCode::Char('b') => self.show_streams(),
+            // The left column stacks four panels, so a long list is cramped.
+            KeyCode::Char('+') => self.zoom = true,
+            KeyCode::Char('_') | KeyCode::Char('-') => self.zoom = false,
             // Esc drops a range without doing anything with it.
             KeyCode::Esc if self.select_anchor.is_some() => self.select_anchor = None,
             KeyCode::Char('u') => {
