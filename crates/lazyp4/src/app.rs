@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, ServerInfo};
+use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Revision, ServerInfo};
 
 use crate::editor::{Editor, Outcome};
 use crate::tree;
@@ -170,6 +170,8 @@ pub enum Modal {
     None,
     Help,
     Log,
+    /// Revision history of one file.
+    History,
 }
 
 pub struct App {
@@ -227,6 +229,11 @@ pub struct App {
     /// Pending confirmation, if any.
     pub confirm: Option<Confirm>,
 
+    /// Revision history of the file the History modal is showing.
+    pub history: Vec<Revision>,
+    pub history_path: String,
+    pub history_scroll: usize,
+
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
     /// The last error, shown in the status bar until something replaces it.
@@ -263,6 +270,9 @@ impl App {
             editing: None,
             picker: None,
             confirm: None,
+            history: Vec::new(),
+            history_path: String::new(),
+            history_scroll: 0,
             diffs: Vec::new(),
             diffs_for: None,
             diff_scroll: 0,
@@ -478,6 +488,15 @@ impl App {
                     self.request_diff();
                 }
             }
+            Event::History {
+                depot_path,
+                revisions,
+            } => {
+                // Ignore an answer for a file the cursor has since left.
+                if self.history_path == depot_path {
+                    self.history = revisions;
+                }
+            }
             Event::Scanned(files) => {
                 self.scanning = false;
                 self.scanned = files;
@@ -554,6 +573,13 @@ impl App {
                 KeyCode::Esc | KeyCode::Char('q') => self.modal = Modal::None,
                 KeyCode::Char('?') if self.modal == Modal::Help => self.modal = Modal::None,
                 KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::None,
+                KeyCode::Char('H') if self.modal == Modal::History => self.modal = Modal::None,
+                KeyCode::Char('j') | KeyCode::Down if self.modal == Modal::History => {
+                    self.history_scroll += 1;
+                }
+                KeyCode::Char('k') | KeyCode::Up if self.modal == Modal::History => {
+                    self.history_scroll = self.history_scroll.saturating_sub(1);
+                }
                 _ => {}
             }
             return;
@@ -580,6 +606,7 @@ impl App {
             KeyCode::Char('d') if self.focus == Panel::Changelists => self.delete_changelist(),
             KeyCode::Char('d') if self.focus == Panel::Files => self.revert_selected(),
             KeyCode::Char('c') => self.submit_changelist(),
+            KeyCode::Char('H') => self.show_history(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -667,6 +694,27 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(Vec::new()));
+    }
+
+    /// Show every revision of the file under the cursor.
+    fn show_history(&mut self) {
+        let Some(file) = self.selected_file() else {
+            self.error = Some("select a file to see its history".into());
+            return;
+        };
+        let depot_path = file.depot_path.clone();
+
+        // Keep whatever is already loaded for this file, so reopening the
+        // panel does not blank it while the server answers.
+        if self.history_path != depot_path {
+            self.history.clear();
+            self.history_path = depot_path.clone();
+        }
+        self.history_scroll = 0;
+        self.modal = Modal::History;
+        self.error = None;
+        self.busy = true;
+        self.worker.send(Request::LoadHistory { depot_path });
     }
 
     /// Submit the selected changelist.

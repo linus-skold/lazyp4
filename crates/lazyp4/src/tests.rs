@@ -671,6 +671,83 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
     assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
 }
 
+fn revision(rev: u32, change: u32, desc: &str) -> p4::Revision {
+    p4::Revision {
+        rev,
+        change,
+        action: FileAction::Edit,
+        user: "linsko".into(),
+        time: Some(1_788_895_733),
+        file_type: "text".into(),
+        description: desc.into(),
+    }
+}
+
+#[test]
+fn shift_h_shows_the_history_of_the_selected_file() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('H'));
+
+    assert_eq!(app.modal, Modal::History);
+    let Some(Request::LoadHistory { depot_path }) = app.last_request() else {
+        panic!("expected a filelog");
+    };
+    assert_eq!(depot_path, "//darksim/main/AGENTS.md");
+
+    app.handle(Event::History {
+        depot_path,
+        revisions: vec![revision(7, 396, "# Updated .p4ignore")],
+    });
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("History of darksim/main/AGENTS.md"), "{out}");
+    assert!(out.contains("#7"), "{out}");
+    assert!(out.contains("396"), "{out}");
+    assert!(out.contains("2026-09-08"), "the date is shown\n{out}");
+    assert!(out.contains("# Updated .p4ignore"), "{out}");
+}
+
+#[test]
+fn history_for_a_file_the_cursor_has_left_is_ignored() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('H'));
+
+    app.handle(Event::History {
+        depot_path: "//darksim/main/Somewhere/Else.cpp".into(),
+        revisions: vec![revision(1, 1, "stale")],
+    });
+
+    assert!(app.history.is_empty());
+}
+
+#[test]
+fn history_closes_without_quitting() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('H'));
+    press(&mut app, KeyCode::Esc);
+
+    assert_eq!(app.modal, Modal::None);
+    assert!(!app.quit);
+}
+
+#[test]
+fn history_needs_a_file_not_a_directory() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    app.last_request();
+    // Row 0 is Source/.
+    press(&mut app, KeyCode::Char('H'));
+
+    assert_eq!(app.modal, Modal::None);
+    assert!(app.last_request().is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("select a file")));
+}
+
 #[test]
 fn c_submits_after_confirming_and_listing_the_files() {
     let mut app = app();

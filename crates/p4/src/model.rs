@@ -193,6 +193,19 @@ pub struct Description {
     pub files: Vec<DescribedFile>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::civil_date;
+
+    #[test]
+    fn formats_a_server_timestamp() {
+        // 1788895733 is the time on change 396.
+        assert_eq!(civil_date(1_788_895_733), "2026-09-08");
+        assert_eq!(civil_date(0), "1970-01-01");
+        assert_eq!(civil_date(951_782_400), "2000-02-29", "a leap day");
+    }
+}
+
 /// One revision of one file, from `p4 filelog`.
 #[derive(Debug, Clone)]
 pub struct Revision {
@@ -203,6 +216,23 @@ pub struct Revision {
     pub time: Option<i64>,
     pub file_type: String,
     pub description: String,
+}
+
+/// Format a server timestamp as `YYYY-MM-DD`.
+///
+/// Hinnant's civil-from-days, so no date crate is needed for the one thing
+/// lazyp4 shows: which day a revision landed.
+pub fn civil_date(epoch_seconds: i64) -> String {
+    let days = epoch_seconds.div_euclid(86_400) + 719_468;
+    let era = days.div_euclid(146_097);
+    let doe = days.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = era * 400 + yoe + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// The server and workspace lazyp4 is talking to, from `p4 info`.

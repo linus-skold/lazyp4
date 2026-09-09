@@ -51,6 +51,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::None => {}
         Modal::Help => draw_help(frame),
         Modal::Log => draw_log(frame, app),
+        Modal::History => draw_file_history(frame, app),
     }
 
     // Drawn last so they sit above any overlay.
@@ -63,6 +64,57 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(confirm) = &app.confirm {
         draw_confirm(frame, confirm);
     }
+}
+
+fn draw_file_history(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let height = area.height.saturating_sub(6).max(6);
+    let width = area.width.saturating_sub(8);
+
+    let lines: Vec<Line> = if app.history.is_empty() {
+        vec![Line::from(Span::styled(
+            "  loading…",
+            Style::default().fg(IDLE),
+        ))]
+    } else {
+        app.history
+            .iter()
+            .skip(app.history_scroll)
+            .map(|r| {
+                Line::from(vec![
+                    Span::styled(
+                        format!(" #{:<4}", r.rev),
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::styled(
+                        format!("{:>8} ", r.change),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        format!("{:<10} ", r.time.map(p4::civil_date).unwrap_or_default()),
+                        Style::default().fg(IDLE),
+                    ),
+                    Span::styled(
+                        format!("{:<10.10} ", r.user),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!("{:<8.8} ", r.action.to_string()),
+                        Style::default().fg(action_color(&r.action)),
+                    ),
+                    Span::raw(r.description.lines().next().unwrap_or_default().to_owned()),
+                ])
+            })
+            .collect()
+    };
+
+    overlay(
+        frame,
+        &format!(" History of {} ", short_path(&app.history_path)),
+        lines,
+        width,
+        height,
+    );
 }
 
 fn draw_confirm(frame: &mut Frame, confirm: &Confirm) {
@@ -671,6 +723,7 @@ fn draw_help(frame: &mut Frame) {
     lines.extend([
         row("r".into(), "refresh".into()),
         row("x".into(), "command log".into()),
+        row("H".into(), "history of the selected file".into()),
         row("?".into(), "this help".into()),
         row("q".into(), "quit".into()),
     ]);

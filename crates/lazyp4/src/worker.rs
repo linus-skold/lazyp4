@@ -10,7 +10,7 @@ use std::thread;
 
 use p4::{
     diff, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection, FileAction,
-    FileDiff, ServerInfo,
+    FileDiff, Revision, ServerInfo,
 };
 
 /// A file in a changelist, from whichever command could see it.
@@ -85,6 +85,9 @@ pub enum Request {
     Submit {
         change: ChangeId,
     },
+    LoadHistory {
+        depot_path: String,
+    },
     /// Move files into `change`, opening them first if Perforce has not seen
     /// them. `ChangeId::Default` moves them out of a numbered changelist.
     MoveFiles {
@@ -122,6 +125,10 @@ pub enum Event {
     },
     /// Files the workspace scan turned up.
     Scanned(Vec<FileEntry>),
+    History {
+        depot_path: String,
+        revisions: Vec<Revision>,
+    },
     /// A write finished. Descriptions and the default changelist's very
     /// existence both come from the change lists, so everything is now stale.
     Changed,
@@ -363,6 +370,20 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                     let _ = events.send(Event::Error(format!("change: {e}")));
                 }
                 let _ = events.send(Event::Changed);
+            }
+            Request::LoadHistory { depot_path } => {
+                let _ = events.send(Event::Log(format!("filelog -l -m 50 {depot_path}")));
+                match p4.filelog(&depot_path, Some(50)) {
+                    Ok(revisions) => {
+                        let _ = events.send(Event::History {
+                            depot_path,
+                            revisions,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("filelog: {e}")));
+                    }
+                }
             }
             Request::Submit { change } => {
                 let _ = events.send(Event::Log(format!("submit -c {change}")));
