@@ -56,6 +56,10 @@ A line replaced end to end is left unhighlighted — lighting up every word of i
 says nothing. Long lines are truncated rather than wrapped, so `h` and `l`
 scroll sideways, and `Enter` gives the diff the whole window.
 
+Tabs are expanded to four-column stops. A terminal draws a tab as a single cell
+or not at all, so tab-indented source — most C++ under Perforce — would
+otherwise lose its nesting entirely.
+
 ## Moving files between changelists
 
 With a numbered changelist selected, Files shows two groups: what is in that

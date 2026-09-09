@@ -6,6 +6,35 @@
 
 use similar::{ChangeTag, TextDiff};
 
+/// Columns a tab advances to. Source under Perforce is very often
+/// tab-indented, and a terminal draws a tab as one cell or none at all, so
+/// nested indentation collapses unless it is expanded here.
+const TAB_WIDTH: usize = 4;
+
+/// Replace tabs with spaces up to the next tab stop.
+///
+/// Position-aware rather than a flat substitution: a tab is "advance to the
+/// next multiple of [`TAB_WIDTH`]", so a tab after three characters is one
+/// space, not four.
+fn expand_tabs(text: &str) -> String {
+    if !text.contains('\t') {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut column = 0;
+    for ch in text.chars() {
+        if ch == '\t' {
+            let stop = TAB_WIDTH - (column % TAB_WIDTH);
+            out.extend(std::iter::repeat_n(' ', stop));
+            column += stop;
+        } else {
+            out.push(ch);
+            column += 1;
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
     /// The `@@ -a,b +c,d @@` line.
@@ -30,6 +59,11 @@ impl Segment {
             text: text.into(),
             changed: false,
         }
+    }
+
+    /// A line of file content, with its indentation made visible.
+    fn content(text: &str) -> Self {
+        Segment::plain(expand_tabs(text))
     }
 }
 
@@ -97,7 +131,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind,
                     old_no: None,
                     new_no: Some(new_no),
-                    segments: vec![Segment::plain(body)],
+                    segments: vec![Segment::content(body)],
                 });
                 new_no += 1;
                 pending += 1;
@@ -107,7 +141,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind,
                     old_no: Some(old_no),
                     new_no: None,
-                    segments: vec![Segment::plain(body)],
+                    segments: vec![Segment::content(body)],
                 });
                 old_no += 1;
                 pending += 1;
@@ -117,7 +151,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind,
                     old_no: None,
                     new_no: None,
-                    segments: vec![Segment::plain(body)],
+                    segments: vec![Segment::content(body)],
                 });
             }
             _ => {
@@ -126,7 +160,7 @@ pub fn rows(hunks: &str) -> Vec<Row> {
                     kind: RowKind::Context,
                     old_no: Some(old_no),
                     new_no: Some(new_no),
-                    segments: vec![Segment::plain(body)],
+                    segments: vec![Segment::content(body)],
                 });
                 old_no += 1;
                 new_no += 1;
@@ -346,5 +380,47 @@ mod tests {
     #[test]
     fn empty_input_yields_no_rows() {
         assert!(rows("").is_empty());
+    }
+
+    #[test]
+    fn tab_indentation_survives_into_the_view() {
+        // Captured shape from Darksim.Build.cs, which is tab-indented.
+        let out = rows("@@ -7,3 +7,3 @@\n \tpublic Darksim()\n \t{\n \t\tPCHUsage = x;\n");
+        let text: Vec<String> = out
+            .iter()
+            .filter(|r| r.kind == RowKind::Context)
+            .map(Row::text)
+            .collect();
+
+        assert_eq!(text[0], "    public Darksim()");
+        assert_eq!(text[1], "    {");
+        assert_eq!(text[2], "        PCHUsage = x;", "nesting is preserved");
+        assert!(
+            !text.iter().any(|l| l.contains('\t')),
+            "a terminal draws a tab as one cell or none, so none may remain"
+        );
+    }
+
+    #[test]
+    fn a_tab_advances_to_the_next_stop_rather_than_adding_four() {
+        assert_eq!(expand_tabs("ab\tc"), "ab  c", "two columns to the stop");
+        assert_eq!(expand_tabs("abc\td"), "abc d", "one column to the stop");
+        assert_eq!(expand_tabs("abcd\te"), "abcd    e", "a full stop");
+        assert_eq!(expand_tabs("\tx"), "    x");
+    }
+
+    #[test]
+    fn text_without_tabs_is_untouched() {
+        assert_eq!(expand_tabs("  already spaced"), "  already spaced");
+    }
+
+    #[test]
+    fn indentation_changes_are_still_word_diffed() {
+        // Re-indenting a line is a real change and must not be hidden.
+        let out = rows("@@ -1,1 +1,1 @@\n-\tlet x = 1;\n+\t\tlet x = 1;\n");
+        let del = out.iter().find(|r| r.kind == RowKind::Delete).unwrap();
+        let add = out.iter().find(|r| r.kind == RowKind::Add).unwrap();
+        assert_eq!(del.text(), "    let x = 1;");
+        assert_eq!(add.text(), "        let x = 1;");
     }
 }

@@ -988,9 +988,24 @@ fn key_release_events_are_ignored() {
 #[test]
 #[ignore = "prints the layout for inspection"]
 fn preview() {
-    let mut picking = on_default();
-    press(&mut picking, KeyCode::Char(' '));
-    println!("{}\n", render(&picking, 100, 22));
+    // Real tab-indented content, as captured from Darksim.Build.cs.
+    let mut tabs = app();
+    tabs.diffs = vec![FileDiff {
+        depot_path: "//darksim/main/AGENTS.md".into(),
+        rev: Some(3),
+        hunks: concat!(
+            "@@ -7,8 +8,10 @@\n",
+            " \tpublic Darksim(ReadOnlyTargetRules Target) : base(Target)\n",
+            " \t{\n",
+            " \t\tPCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;\n",
+            "-\t\n",
+            "+\n",
+            " \t\tPublicDependencyModuleNames.Add(\"ImGui\");\n",
+        )
+        .to_owned(),
+    }];
+    tabs.diff_fullscreen = true;
+    println!("{}\n", render(&tabs, 92, 12));
 
     let mut app = nested();
     app.loose_files = vec![
