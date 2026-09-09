@@ -250,8 +250,10 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // The selection indexes files; the list also holds group headers.
+    // The cursor counts only selectable rows; the list also holds group
+    // headers, so the two indexes have to be reconciled here.
     let mut selected_row = None;
+    let mut selectable = 0usize;
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
@@ -260,11 +262,27 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
                 format!(" {text}"),
                 Style::default().fg(IDLE).add_modifier(Modifier::BOLD),
             ))),
-            FileRow::File(i, f) => {
-                if *i == app.file_sel {
+            FileRow::Dir {
+                label,
+                depth,
+                collapsed,
+                files,
+                ..
+            } => {
+                if selectable == app.file_sel {
                     selected_row = Some(row);
                 }
-                file_item(f)
+                selectable += 1;
+                dir_item(label, *depth, *collapsed, *files)
+            }
+            FileRow::File {
+                entry, label, depth, ..
+            } => {
+                if selectable == app.file_sel {
+                    selected_row = Some(row);
+                }
+                selectable += 1;
+                file_item(entry, label, *depth)
             }
         })
         .collect();
@@ -279,7 +297,29 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn file_item(f: &FileEntry) -> ListItem<'static> {
+/// Two columns of marker, then the indent, so every name starts at the same
+/// depth-dependent column and the markers line up down the left.
+fn indent(depth: usize) -> String {
+    "  ".repeat(depth)
+}
+
+fn dir_item(label: &str, depth: usize, collapsed: bool, files: usize) -> ListItem<'static> {
+    ListItem::new(Line::from(vec![
+        Span::raw("   "),
+        Span::raw(indent(depth)),
+        Span::styled(
+            if collapsed { "▸ " } else { "▾ " }.to_owned(),
+            Style::default().fg(IDLE),
+        ),
+        Span::styled(
+            label.to_owned(),
+            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" {files}"), Style::default().fg(IDLE)),
+    ]))
+}
+
+fn file_item(f: &FileEntry, label: &str, depth: usize) -> ListItem<'static> {
     // `??` for a file Perforce has never seen, mirroring git's untracked mark.
     let (code, color) = if f.untracked() {
         ("??".to_owned(), Color::Magenta)
@@ -293,8 +333,9 @@ fn file_item(f: &FileEntry) -> ListItem<'static> {
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
+        Span::raw(indent(depth)),
         Span::styled(
-            f.depot_path.clone(),
+            label.to_owned(),
             // A file that is not open is not part of any changelist yet.
             if f.opened {
                 Style::default()
@@ -510,7 +551,10 @@ fn draw_help(frame: &mut Frame) {
         row("Tab / Shift-Tab".into(), "cycle panels".into()),
         row("[ ]".into(), "switch tab within a panel".into()),
         row("Enter".into(), "diff fullscreen (Esc to leave)".into()),
-        row("h / l, ← / →".into(), "scroll the diff sideways".into()),
+        row(
+            "h / l, ← / →".into(),
+            "fold a directory, or scroll the diff".into(),
+        ),
         row("Space".into(), "move a file in or out of the changelist".into()),
         row("u".into(), "scan for untracked files (slow)".into()),
         row("e".into(), "edit the changelist description".into()),

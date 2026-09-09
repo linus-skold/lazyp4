@@ -1,9 +1,12 @@
 //! Application state and key routing.
 
+use std::collections::HashSet;
+
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, ServerInfo};
 
 use crate::editor::{Editor, Outcome};
+use crate::tree;
 use crate::worker::{Event, FileEntry, Request, Worker};
 
 /// The panels, in tab order. The layout runs top to bottom down the left
@@ -88,11 +91,43 @@ impl ChangeTab {
     }
 }
 
-/// A row of the Files panel. Headers only appear when there are two groups.
+/// Which half of the Files panel a row belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Group {
+    /// Open in the selected changelist.
+    InChange,
+    /// The default changelist, plus anything the workspace scan found.
+    Loose,
+}
+
+/// A row of the Files panel.
+///
+/// Headers only appear when there are two groups. Directories and files are
+/// both selectable; headers are not.
 pub enum FileRow<'a> {
     Header(String),
-    /// The file, and its index into [`App::all_files`].
-    File(usize, &'a FileEntry),
+    Dir {
+        group: Group,
+        /// Path below the tree root, which identifies the row for collapsing.
+        path: String,
+        label: String,
+        depth: usize,
+        collapsed: bool,
+        files: usize,
+    },
+    File {
+        /// Index into [`App::all_files`].
+        index: usize,
+        entry: &'a FileEntry,
+        label: String,
+        depth: usize,
+    },
+}
+
+impl FileRow<'_> {
+    fn selectable(&self) -> bool {
+        !matches!(self, FileRow::Header(_))
+    }
 }
 
 /// Which full-screen overlay is open, if any.
@@ -136,6 +171,9 @@ pub struct App {
     /// Result of the last workspace scan, merged into `loose_files`.
     pub scanned: Vec<FileEntry>,
     pub scanning: bool,
+    /// Directory paths whose contents are hidden. Shared by both groups, so a
+    /// directory reads the same way wherever it appears.
+    collapsed: HashSet<String>,
 
     /// Diffs for the whole selected changelist, keyed by `diffs_for`.
     pub diffs: Vec<FileDiff>,
@@ -180,6 +218,7 @@ impl App {
             file_sel: 0,
             scanned: Vec::new(),
             scanning: false,
+            collapsed: HashSet::new(),
             editor: None,
             diffs: Vec::new(),
             diffs_for: None,
@@ -258,32 +297,91 @@ impl App {
         self.files.iter().chain(self.loose_files.iter()).collect()
     }
 
+    /// The depot path the tree hangs off. `/` on screen.
+    ///
+    /// The stream when the workspace has one; otherwise the deepest directory
+    /// every listed file shares.
+    pub fn depot_root(&self) -> String {
+        if let Some(stream) = self.info.as_ref().and_then(|i| i.stream.clone()) {
+            return stream;
+        }
+        tree::common_root(self.all_files().iter().map(|f| f.depot_path.as_str()))
+    }
+
+    /// The selected row, or `None` when nothing is selectable.
+    pub fn selected_row(&self) -> Option<FileRow<'_>> {
+        self.file_rows()
+            .into_iter()
+            .filter(FileRow::selectable)
+            .nth(self.file_sel)
+    }
+
     pub fn selected_file(&self) -> Option<&FileEntry> {
-        self.all_files().get(self.file_sel).copied()
+        match self.selected_row()? {
+            FileRow::File { index, .. } => self.all_files().get(index).copied(),
+            _ => None,
+        }
     }
 
-    /// True when the selection sits in the lower group.
-    fn selection_is_loose(&self) -> bool {
-        self.file_sel >= self.files.len()
+    /// Number of rows the cursor can land on.
+    fn selectable_count(&self) -> usize {
+        self.file_rows().iter().filter(|r| r.selectable()).count()
     }
 
-    /// The rows to draw, headers included. Only present when there is a second
-    /// group to separate from the first.
+    /// Which group a file index belongs to.
+    fn group_of(&self, index: usize) -> Group {
+        if index < self.files.len() {
+            Group::InChange
+        } else {
+            Group::Loose
+        }
+    }
+
+    /// The rows to draw. Each group is its own tree; headers separate them and
+    /// only appear when there is a second group.
     pub fn file_rows(&self) -> Vec<FileRow<'_>> {
+        let root = self.depot_root();
+        let all = self.all_files();
         let split = self.files.len();
-        let in_change = self
-            .files
-            .iter()
-            .enumerate()
-            .map(|(i, f)| FileRow::File(i, f));
-        let loose = self
-            .loose_files
-            .iter()
-            .enumerate()
-            .map(move |(i, f)| FileRow::File(split + i, f));
 
+        let subtree = |group: Group, offset: usize, files: &[FileEntry]| -> Vec<FileRow<'_>> {
+            let entries: Vec<tree::Entry> = files
+                .iter()
+                .enumerate()
+                .map(|(i, f)| tree::Entry {
+                    index: offset + i,
+                    path: tree::relative(&f.depot_path, &root),
+                })
+                .collect();
+
+            tree::build(&entries, &self.collapsed)
+                .into_iter()
+                .map(|row| match row.node {
+                    tree::Node::Dir {
+                        path,
+                        files,
+                        collapsed,
+                    } => FileRow::Dir {
+                        group,
+                        path,
+                        label: row.label,
+                        depth: row.depth,
+                        collapsed,
+                        files,
+                    },
+                    tree::Node::File { index } => FileRow::File {
+                        index,
+                        entry: all[index],
+                        label: row.label,
+                        depth: row.depth,
+                    },
+                })
+                .collect()
+        };
+
+        let in_change = subtree(Group::InChange, 0, &self.files);
         if self.loose_files.is_empty() {
-            return in_change.collect();
+            return in_change;
         }
 
         let heading = match self.selected_change() {
@@ -294,7 +392,7 @@ impl App {
         let mut rows = vec![FileRow::Header(heading)];
         rows.extend(in_change);
         rows.push(FileRow::Header("Default".to_owned()));
-        rows.extend(loose);
+        rows.extend(subtree(Group::Loose, split, &self.loose_files));
         rows
     }
 
@@ -421,6 +519,14 @@ impl App {
                 }
             }
             KeyCode::Char(' ') => self.move_selected_file(),
+            // On a directory this folds the tree; everywhere else it is the
+            // fullscreen diff, as lazygit does with Enter on a folder.
+            KeyCode::Enter
+                if self.focus == Panel::Files
+                    && matches!(self.selected_row(), Some(FileRow::Dir { .. })) =>
+            {
+                self.toggle_collapse(None);
+            }
             KeyCode::Enter => {
                 self.diff_fullscreen = !self.diff_fullscreen;
                 if self.diff_fullscreen {
@@ -454,6 +560,13 @@ impl App {
             }
             KeyCode::Char('l') | KeyCode::Right if self.focus == Panel::Diff => {
                 self.diff_hscroll += 8;
+            }
+            // Tree navigation, which only the Files panel has.
+            KeyCode::Char('h') | KeyCode::Left if self.focus == Panel::Files => {
+                self.toggle_collapse(Some(true));
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.focus == Panel::Files => {
+                self.toggle_collapse(Some(false));
             }
 
             _ => {}
@@ -531,13 +644,60 @@ impl App {
     /// Down from the changelist means back to the default one; up from the
     /// default group means into the selected changelist, opening the file first
     /// if the scan found it unopened.
+    /// Files the selected row stands for: one for a file, everything beneath
+    /// it for a directory.
+    fn selected_files(&self) -> Vec<FileEntry> {
+        match self.selected_row() {
+            Some(FileRow::File { index, .. }) => {
+                self.all_files().get(index).map(|f| (*f).clone()).into_iter().collect()
+            }
+            Some(FileRow::Dir { group, path, .. }) => {
+                let root = self.depot_root();
+                let prefix = format!("{path}/");
+                let source = match group {
+                    Group::InChange => &self.files,
+                    Group::Loose => &self.loose_files,
+                };
+                source
+                    .iter()
+                    .filter(|f| tree::relative(&f.depot_path, &root).starts_with(&prefix))
+                    .cloned()
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Expand or collapse the selected directory. Does nothing on a file.
+    fn toggle_collapse(&mut self, want_collapsed: Option<bool>) {
+        let Some(FileRow::Dir { path, collapsed, .. }) = self.selected_row() else {
+            return;
+        };
+        let collapse = want_collapsed.unwrap_or(!collapsed);
+        if collapse {
+            self.collapsed.insert(path);
+        } else {
+            self.collapsed.remove(&path);
+        }
+        // Rows above the cursor never move, so the selection stays put.
+        self.file_sel = self.file_sel.min(self.selectable_count().saturating_sub(1));
+    }
+
     fn move_selected_file(&mut self) {
         if self.focus != Panel::Files {
             return;
         }
-        let Some(file) = self.selected_file().cloned() else {
+        let files = self.selected_files();
+        if files.is_empty() {
             return;
-        };
+        }
+        let loose = matches!(
+            self.selected_row(),
+            Some(FileRow::File { index, .. }) if self.group_of(index) == Group::Loose
+        ) || matches!(
+            self.selected_row(),
+            Some(FileRow::Dir { group: Group::Loose, .. })
+        );
         let Some(cl) = self.selected_change() else {
             return;
         };
@@ -552,16 +712,12 @@ impl App {
             return;
         }
 
-        let target = if self.selection_is_loose() {
-            cl.id
-        } else {
-            ChangeId::Default
-        };
+        let target = if loose { cl.id } else { ChangeId::Default };
         self.busy = true;
         self.error = None;
         self.worker.send(Request::MoveFiles {
             change: target,
-            files: vec![file],
+            files,
         });
     }
 
@@ -581,7 +737,7 @@ impl App {
             return;
         }
         let (sel, len) = match self.focus {
-            Panel::Files => (self.file_sel, self.all_files().len()),
+            Panel::Files => (self.file_sel, self.selectable_count()),
             Panel::Changelists => (self.change_sel, self.tab_changes().len()),
             Panel::History => (self.history_sel, self.submitted.len()),
             Panel::Status | Panel::Diff => return,
@@ -600,7 +756,7 @@ impl App {
             return;
         }
         let len = match self.focus {
-            Panel::Files => self.all_files().len(),
+            Panel::Files => self.selectable_count(),
             Panel::Changelists => self.tab_changes().len(),
             Panel::History => self.submitted.len(),
             Panel::Status | Panel::Diff => return,

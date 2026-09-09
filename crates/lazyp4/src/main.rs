@@ -5,6 +5,7 @@ mod diffview;
 mod editor;
 #[cfg(test)]
 mod tests;
+mod tree;
 mod ui;
 mod worker;
 

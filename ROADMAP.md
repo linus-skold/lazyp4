@@ -72,13 +72,12 @@ The current `Space`-moves-one-file loop is the weakest part of the app.
    moving thirty files is thirty keystrokes. Everything in A and C should accept
    a selection, not just the cursor line.
 2. **Move all.** lazygit's `a` stages everything. `p4 reopen -c <cl> //...` does
-   it in one command.
+   it in one command. `Space` on a directory already covers the common case.
 3. **A target that does not exist yet.** Right now `Space` from the default
    group requires a numbered changelist to already be selected. Creating one on
    the spot is the common case: check out files, then decide where they go.
-4. **Shorter paths.** The Files panel prints the full depot path, so the part
-   that distinguishes two files is off the right edge. Strip the stream prefix
-   and elide the middle.
+4. ~~**Shorter paths.**~~ Done — the panel is a folding tree rooted at the
+   stream.
 5. **Discard.** There is no way to undo an `add` or throw away a local edit —
    see `revert` in A.
 6. **A cheaper scan.** `u` walks the whole workspace. `p4 status -f <dir>` scoped

@@ -8,7 +8,7 @@ use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, ChangeTab, Modal, Panel};
+use crate::app::{App, ChangeTab, FileRow, Modal, Panel};
 use crate::ui;
 use crate::worker::{Event, FileEntry, Request, Worker};
 
@@ -377,11 +377,122 @@ fn the_cursor_walks_from_one_group_into_the_next() {
     press(&mut app, KeyCode::Char('j'));
     press(&mut app, KeyCode::Char('j'));
 
+    // The default group's file sits under Config/, so the directory row comes
+    // first.
+    assert!(
+        matches!(app.selected_row(), Some(FileRow::Dir { label, .. }) if label == "Config/"),
+        "j past the last file of the changelist lands on the next group's tree"
+    );
+
+    press(&mut app, KeyCode::Char('j'));
     assert_eq!(
         app.selected_file().unwrap().depot_path,
-        "//darksim/main/Config/DefaultEngine.ini",
-        "j past the last file of the changelist lands in the default group"
+        "//darksim/main/Config/DefaultEngine.ini"
     );
+}
+
+/// Deeper paths than the shared fixture, to exercise the tree.
+fn nested() -> App {
+    let mut app = app();
+    app.files = vec![
+        file("//darksim/main/Source/Darksim/Actors/Door.cpp", FileAction::Edit, false),
+        file("//darksim/main/Source/Darksim/Actors/Door.h", FileAction::Edit, false),
+        file("//darksim/main/Source/Editor/Tool.cpp", FileAction::Add, false),
+        file("//darksim/main/README.md", FileAction::Edit, false),
+    ];
+    app.loose_files.clear();
+    app.file_sel = 0;
+    app
+}
+
+#[test]
+fn files_are_shown_as_a_tree_below_the_depot_root() {
+    let out = render(&nested(), 120, 40);
+    // Directories are folded where they have a single child, and the shared
+    // depot prefix is gone.
+    assert!(out.contains("Source/"), "{out}");
+    assert!(out.contains("Darksim/Actors/"), "{out}");
+    assert!(out.contains("Door.cpp"), "{out}");
+    assert!(
+        !out.contains("//darksim/main/Source"),
+        "the root prefix should not be repeated on every row\n{out}"
+    );
+}
+
+#[test]
+fn collapsing_a_directory_hides_its_files() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    // Row 0 is Source/, the first directory.
+    assert!(matches!(app.selected_row(), Some(FileRow::Dir { .. })));
+
+    press(&mut app, KeyCode::Char('h'));
+    let out = render(&app, 120, 40);
+    assert!(out.contains("Source/"), "{out}");
+    assert!(!out.contains("Door.cpp"), "collapsed contents are hidden\n{out}");
+
+    press(&mut app, KeyCode::Char('l'));
+    assert!(render(&app, 120, 40).contains("Door.cpp"), "and come back");
+}
+
+#[test]
+fn enter_on_a_directory_folds_it_rather_than_going_fullscreen() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Enter);
+
+    assert!(!app.diff_fullscreen, "Enter on a folder is not the diff key");
+    assert!(!render(&app, 120, 40).contains("Door.cpp"));
+}
+
+#[test]
+fn a_directory_row_counts_the_files_beneath_it() {
+    let out = render(&nested(), 120, 40);
+    // Source/ holds three of the four files.
+    assert!(out.contains("Source/ 3"), "{out}");
+}
+
+#[test]
+fn space_on_a_directory_moves_everything_under_it() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    app.last_request();
+
+    // Source/Darksim/Actors/ — step past Source/ and Darksim/Actors/ is next.
+    press(&mut app, KeyCode::Char('j'));
+    let Some(FileRow::Dir { label, .. }) = app.selected_row() else {
+        panic!("expected a directory row");
+    };
+    assert_eq!(label, "Darksim/Actors/");
+
+    press(&mut app, KeyCode::Char(' '));
+    let Some(Request::MoveFiles { change, files }) = app.last_request() else {
+        panic!("expected a move");
+    };
+    assert_eq!(change, ChangeId::Default, "out of the changelist");
+    let moved: Vec<&str> = files.iter().map(|f| f.depot_path.as_str()).collect();
+    assert_eq!(
+        moved,
+        [
+            "//darksim/main/Source/Darksim/Actors/Door.cpp",
+            "//darksim/main/Source/Darksim/Actors/Door.h"
+        ],
+        "only the files under that directory, not its siblings"
+    );
+}
+
+#[test]
+fn the_stream_is_the_tree_root_when_the_server_reports_one() {
+    let mut app = nested();
+    app.handle(Event::Info(ServerInfo {
+        user: "linsko".into(),
+        client: MINE.into(),
+        client_known: true,
+        stream: Some("//darksim/main".into()),
+        ..Default::default()
+    }));
+    assert_eq!(app.depot_root(), "//darksim/main");
+    assert!(render(&app, 120, 40).contains("README.md"));
 }
 
 #[test]
@@ -777,7 +888,12 @@ fn key_release_events_are_ignored() {
 #[test]
 #[ignore = "prints the layout for inspection"]
 fn preview() {
-    let mut app = app();
+    let mut app = nested();
+    app.loose_files = vec![
+        file("//darksim/main/Config/DefaultEngine.ini", FileAction::Edit, false),
+        unopened("//darksim/main/Source/Darksim/New.cpp", FileAction::Add),
+    ];
+    app.focus = Panel::Files;
     app.handle(Event::Scanned(vec![
         unopened("//darksim/main/NewThing.cpp", FileAction::Add),
         unopened("//darksim/main/Changed.cpp", FileAction::Edit),
@@ -788,7 +904,7 @@ fn preview() {
         hunks: "@@ -38,7 +38,8 @@\n Intermediate/\n Saved/\n \n-let x = compute(alpha, beta);\n+let x = compute(alpha, gamma);\n+Binaries/\n \n # Ignore UBT\n"
             .into(),
     }];
-    println!("{}", render(&app, 110, 22));
+    println!("{}", render(&app, 100, 40));
 }
 
 #[test]

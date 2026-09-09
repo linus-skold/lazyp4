@@ -62,6 +62,26 @@ With a numbered changelist selected, Files shows two groups: what is in that
 changelist, and the default changelist below it. `Space` moves the file under
 the cursor across the divider — into the changelist, or back out to default.
 
+Each group is a tree rooted at the depot root — the stream when the workspace
+has one, otherwise the deepest directory the listed files share. Directories
+with a single child are folded into one row, so a deep path reads as
+`Source/Darksim/Actors/` rather than three rows of one entry each.
+
+```text
+ In changelist 395
+   ▾ Source/ 3
+     ▾ Darksim/Actors/ 2
+M      Door.cpp
+M      Door.h
+     ▾ Editor/ 1
+A      Tool.cpp
+M  README.md
+```
+
+`h` and `l` fold and unfold a directory, as does `Enter`. `Space` on a
+directory moves every file beneath it, which is the quickest way to move a
+whole feature's worth of files at once.
+
 `u` scans the workspace for files that differ from the depot without being
 open, and adds them to the lower group. It walks the whole workspace and takes
 tens of seconds on a large tree, so it only runs when you ask.
@@ -92,10 +112,10 @@ the changelist is left exactly as the server sent it.
 | `Tab`, `Shift-Tab` | cycle panels |
 | `[` `]` | switch tab within a panel |
 | `e` | edit the changelist description |
-| `Space` | move a file in or out of the changelist |
+| `Space` | move a file, or a whole directory, in or out of the changelist |
+| `h` `l`, `←` `→` | fold and unfold a directory (Files), scroll the diff (Diff) |
 | `u` | scan for files that are changed but not open (slow) |
-| `Enter` | give the diff the whole window (`Esc` to leave) |
-| `h` `l`, `←` `→` | scroll the diff sideways |
+| `Enter` | fold a directory, else give the diff the whole window (`Esc` to leave) |
 | `r` | refresh |
 | `x` | command log — every P4API call made |
 | `?` | help |
