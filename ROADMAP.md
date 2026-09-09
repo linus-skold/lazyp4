@@ -60,16 +60,14 @@ files, all behind a confirmation with no default answer.
 | ~~Delete an empty changelist~~ | `p4 change -d <cl>` | `d` in Changelists |
 | ~~Revert files~~ | `p4 revert <files>` | `d` in Files |
 | ~~Move to a *new* changelist~~ | create, then `reopen` | The move picker |
+| ~~Submit the default changelist~~ | `p4 submit -d <desc>` | `c`, after asking for a description |
+| ~~Preview a revert~~ | `p4 revert -n <files>` | What the confirmation lists |
 
-What is left here:
-
-- A submit that fails because files need resolving currently just reports the
-  server's message. It should route into the resolve flow (D).
-- Submitting is refused for the default changelist rather than supported.
-  `p4 submit` with no `-c` would do it, but the default changelist has no
-  description and would sweep in whatever else happens to be open.
-- Reverting uses the file list lazyp4 already holds. `p4 revert -n` previews
-  what the server would actually do and would be a stronger confirmation.
+Done. `c` on the default changelist asks for a description and then submits it
+with `p4 submit -d`, saying plainly that the whole changelist goes. `d` in Files
+asks the server with `p4 revert -n` what it would really do and confirms against
+that answer rather than against the list lazyp4 happens to hold. A submit that
+fails on an unresolved file points at `R`.
 
 ## B. The file flow
 

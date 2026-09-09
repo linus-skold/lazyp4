@@ -186,6 +186,14 @@ pub struct DescribedFile {
     pub file_type: Option<String>,
 }
 
+/// One file `p4 revert -n` says it would revert.
+#[derive(Debug, Clone)]
+pub struct RevertPreview {
+    pub depot_path: String,
+    /// What the file is open for, and so what would be thrown away.
+    pub action: FileAction,
+}
+
 /// A changelist together with its files.
 #[derive(Debug, Clone)]
 pub struct Description {

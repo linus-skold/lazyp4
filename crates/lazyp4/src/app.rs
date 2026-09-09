@@ -3,7 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, Revision, ServerInfo, Stream, Unresolved};
+use p4::{
+    ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, RevertPreview, Revision, ServerInfo,
+    Stream, Unresolved,
+};
 
 use crate::editor::{Editor, Outcome};
 use crate::tree;
@@ -164,6 +167,9 @@ enum Editing {
     Description(ChangeId),
     /// Describe a changelist that does not exist yet, then fill it.
     NewChange(PostCreate),
+    /// Describe the default changelist, which has no description of its own,
+    /// so that it can be submitted.
+    SubmitDefault,
 }
 
 /// Which full-screen overlay is open, if any.
@@ -274,6 +280,9 @@ pub struct App {
     worker: Worker,
     pending_files: Option<ChangeId>,
     pending_diff: Option<ChangeId>,
+    /// How many files a revert in flight left alone because they are not open.
+    /// `Some` only while the server's preview is awaited.
+    pending_revert: Option<usize>,
 }
 
 impl App {
@@ -325,6 +334,7 @@ impl App {
             worker,
             pending_files: None,
             pending_diff: None,
+            pending_revert: None,
         }
     }
 
@@ -586,6 +596,7 @@ impl App {
                 self.notice = Some(text);
                 self.error = None;
             }
+            Event::RevertPreview { files, preview } => self.confirm_revert(files, preview),
             Event::Unresolved(files) => {
                 self.unresolved = files;
                 self.unresolved_sel = self
@@ -1128,10 +1139,19 @@ impl App {
             return;
         }
         if cl.id == ChangeId::Default {
-            // The default changelist has no description, and submitting it
-            // would drop in whatever else happens to be open.
-            self.error =
-                Some("move these files into a changelist before submitting".into());
+            // The default changelist is not a spec and carries no description,
+            // so ask for one. Everything open in it goes, which is what the
+            // confirmation then has to show.
+            if self.files.is_empty() {
+                self.error = Some("the default changelist has no files".into());
+                return;
+            }
+            self.error = None;
+            self.editor = Some(Editor::new(
+                "Description to submit the default changelist",
+                "",
+            ));
+            self.editing = Some(Editing::SubmitDefault);
             return;
         }
         if !self.is_mine(&cl) {
@@ -1147,12 +1167,7 @@ impl App {
             return;
         }
 
-        let root = self.depot_root();
-        let mut lines: Vec<String> = self
-            .files
-            .iter()
-            .map(|f| format!("{} {}", f.action.code(), tree::relative(&f.depot_path, &root)))
-            .collect();
+        let mut lines = self.file_lines(&self.files);
         lines.push(String::new());
         lines.push(cl.summary().to_owned());
 
@@ -1161,6 +1176,32 @@ impl App {
             lines,
             Request::Submit { change: cl.id },
         );
+    }
+
+    /// Confirm submitting everything open in the default changelist.
+    fn confirm_submit_default(&mut self, description: String) {
+        let mut lines = self.file_lines(&self.files);
+        lines.push(String::new());
+        lines.push(description.lines().next().unwrap_or_default().to_owned());
+        lines.push(String::new());
+        // No `-c` means the server takes the whole default changelist, not a
+        // selection, so say so before it happens.
+        lines.push("Everything open in the default changelist goes.".to_owned());
+
+        self.ask(
+            "Submit the default changelist to the depot?".to_owned(),
+            lines,
+            Request::SubmitDefault { description },
+        );
+    }
+
+    /// One line per file: its action mark and its path below the tree root.
+    fn file_lines<'a>(&self, files: impl IntoIterator<Item = &'a FileEntry>) -> Vec<String> {
+        let root = self.depot_root();
+        files
+            .into_iter()
+            .map(|f| format!("{} {}", f.action.code(), tree::relative(&f.depot_path, &root)))
+            .collect()
     }
 
     /// Throw away the local changes to the selected file, or to everything
@@ -1187,29 +1228,43 @@ impl App {
             return;
         }
 
-        let mut lines: Vec<String> = open
+        // Ask the server what it would actually do before showing a question
+        // about it: our own list can be stale, and it cannot see a file that is
+        // open with nothing to throw away.
+        self.error = None;
+        self.busy = true;
+        // The range has been read into the request; leaving it highlighted
+        // would suggest it is still pending.
+        self.select_anchor = None;
+        self.pending_revert = Some(unopened.len());
+        self.worker.send(Request::PreviewRevert { files: open });
+    }
+
+    /// Put the revert question up once the server has said what it would do.
+    fn confirm_revert(&mut self, files: Vec<FileEntry>, preview: Vec<RevertPreview>) {
+        let Some(skipped) = self.pending_revert.take() else {
+            return;
+        };
+        if preview.is_empty() {
+            self.error = Some("the server would revert nothing".into());
+            return;
+        }
+
+        let root = self.depot_root();
+        let mut lines: Vec<String> = preview
             .iter()
-            .map(|f| {
-                format!(
-                    "{} {}",
-                    f.action.code(),
-                    tree::relative(&f.depot_path, &self.depot_root())
-                )
-            })
+            .map(|p| format!("{} {}", p.action.code(), tree::relative(&p.depot_path, &root)))
             .collect();
-        if !unopened.is_empty() {
-            lines.push(format!(
-                "({} not open, left alone)",
-                unopened.len()
-            ));
+        if skipped > 0 {
+            lines.push(format!("({skipped} not open, left alone)"));
         }
         lines.push(String::new());
         lines.push("Local changes to these files will be lost.".to_owned());
 
         self.ask(
-            format!("Revert {} file(s)?", open.len()),
+            format!("Revert {} file(s)?", preview.len()),
             lines,
-            Request::RevertFiles { files: open },
+            Request::RevertFiles { files },
         );
     }
 
@@ -1298,6 +1353,13 @@ impl App {
                 description,
             },
             Some(Editing::NewChange(then)) => Request::CreateChange { description, then },
+            // Submitting is irreversible, so the description is only the first
+            // half: the confirmation still has to be answered.
+            Some(Editing::SubmitDefault) => {
+                self.editor = None;
+                self.confirm_submit_default(description);
+                return;
+            }
             None => return,
         };
 

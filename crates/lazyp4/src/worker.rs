@@ -10,7 +10,7 @@ use std::thread;
 
 use p4::{
     diff, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection, FileAction,
-    FileDiff, Resolution, Revision, ServerInfo, Stream, Unresolved,
+    FileDiff, Resolution, RevertPreview, Revision, ServerInfo, Stream, Unresolved,
 };
 
 /// A file in a changelist, from whichever command could see it.
@@ -103,11 +103,19 @@ pub enum Request {
     DeleteChange {
         change: ChangeId,
     },
+    /// Ask the server what a revert would do, without doing it.
+    PreviewRevert {
+        files: Vec<FileEntry>,
+    },
     RevertFiles {
         files: Vec<FileEntry>,
     },
     Submit {
         change: ChangeId,
+    },
+    /// Submit everything open in the default changelist, under `description`.
+    SubmitDefault {
+        description: String,
     },
     LoadHistory {
         depot_path: String,
@@ -169,6 +177,12 @@ pub enum Event {
         revisions: Vec<Revision>,
     },
     Unresolved(Vec<Unresolved>),
+    /// What a revert would do, with the files it was asked about carried back
+    /// so the answer can be acted on unchanged.
+    RevertPreview {
+        files: Vec<FileEntry>,
+        preview: Vec<RevertPreview>,
+    },
     Streams(Vec<Stream>),
     /// Something worth saying that is not an error.
     Notice(String),
@@ -517,19 +531,32 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                     Ok(()) => {
                         let _ = events.send(Event::Log(format!("{change} submitted")));
                     }
-                    Err(e) => {
-                        // Much the most common failure is an unresolved file.
-                        // Say which key opens the view that fixes it.
-                        let message = e.to_string();
-                        let hint = if message.to_lowercase().contains("resolve") {
-                            " — press R to resolve"
-                        } else {
-                            ""
-                        };
-                        let _ = events.send(Event::Error(format!("submit: {message}{hint}")));
-                    }
+                    Err(e) => submit_failed(&events, e),
                 }
                 let _ = events.send(Event::Changed);
+            }
+            Request::SubmitDefault { description } => {
+                let _ = events.send(Event::Log("submit -d (default)".into()));
+                match p4.submit_default(&description) {
+                    Ok(()) => {
+                        let _ = events
+                            .send(Event::Notice("default changelist submitted".into()));
+                    }
+                    Err(e) => submit_failed(&events, e),
+                }
+                let _ = events.send(Event::Changed);
+            }
+            Request::PreviewRevert { files } => {
+                let paths: Vec<&str> = files.iter().map(|f| f.command_path()).collect();
+                let _ = events.send(Event::Log(format!("revert -n ({} files)", paths.len())));
+                match p4.revert_preview(&paths) {
+                    Ok(preview) => {
+                        let _ = events.send(Event::RevertPreview { files, preview });
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("revert -n: {e}")));
+                    }
+                }
             }
             Request::RevertFiles { files } => {
                 let paths: Vec<&str> = files.iter().map(|f| f.command_path()).collect();
@@ -654,6 +681,18 @@ fn move_files(p4: &mut Client, events: &Sender<Event>, change: ChangeId, files: 
             let _ = events.send(Event::Error(format!("{action}: {e}")));
         }
     }
+}
+
+/// Report a failed submit, pointing at the resolve view when that is what went
+/// wrong — much the most common cause.
+fn submit_failed(events: &Sender<Event>, e: p4::Error) {
+    let message = e.to_string();
+    let hint = if message.to_lowercase().contains("resolve") {
+        " — press R to resolve"
+    } else {
+        ""
+    };
+    let _ = events.send(Event::Error(format!("submit: {message}{hint}")));
 }
 
 /// A stand-in for the default changelist, which the server never lists.

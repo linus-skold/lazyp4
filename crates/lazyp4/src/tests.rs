@@ -137,6 +137,26 @@ fn unopened(path: &str, action: FileAction) -> FileEntry {
     }
 }
 
+/// Answer a revert preview the way a server that agrees would: every file the
+/// app asked about comes back.
+fn allow_revert(app: &mut App) -> Vec<FileEntry> {
+    let Some(Request::PreviewRevert { files }) = app.last_request() else {
+        panic!("expected a revert preview");
+    };
+    let preview = files
+        .iter()
+        .map(|f| p4::RevertPreview {
+            depot_path: f.depot_path.clone(),
+            action: f.action.clone(),
+        })
+        .collect();
+    app.handle(Event::RevertPreview {
+        files: files.clone(),
+        preview,
+    });
+    files
+}
+
 fn render(app: &App, width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
     terminal
@@ -864,6 +884,7 @@ fn a_range_covering_a_directory_takes_its_contents_once() {
         press(&mut app, KeyCode::Char('j'));
     }
     press(&mut app, KeyCode::Char('d'));
+    allow_revert(&mut app);
     press(&mut app, KeyCode::Char('y'));
 
     let Some(Request::RevertFiles { files }) = app.last_request() else {
@@ -1478,16 +1499,49 @@ fn a_changelist_without_a_real_description_is_not_submitted() {
 }
 
 #[test]
-fn the_default_changelist_is_not_submitted_directly() {
+fn the_default_changelist_is_submitted_under_a_description_typed_first() {
     let mut app = on_default();
     press(&mut app, KeyCode::Char('c'));
 
+    // It is not a spec and has no description of its own, so one is asked for.
+    let editor = app.editor.as_ref().expect("a description is required");
+    assert!(editor.title.contains("default changelist"), "{}", editor.title);
     assert!(app.confirm.is_none());
     assert!(app.last_request().is_none());
-    assert!(app
-        .error
-        .as_deref()
-        .is_some_and(|e| e.contains("into a changelist")));
+
+    for c in "Loose work".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    press(&mut app, KeyCode::Enter);
+
+    assert!(app.editor.is_none());
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Submit the default changelist to the depot?");
+    assert!(confirm.lines.iter().any(|l| l.contains("Loose.cpp")));
+    assert!(confirm.lines.iter().any(|l| l.contains("Loose work")));
+    assert!(
+        confirm.lines.iter().any(|l| l.contains("Everything open")),
+        "no -c means the whole default changelist goes: {:?}",
+        confirm.lines
+    );
+    assert!(app.last_request().is_none(), "nothing happens until y");
+
+    press(&mut app, KeyCode::Char('y'));
+    let Some(Request::SubmitDefault { description }) = app.last_request() else {
+        panic!("expected a default submit");
+    };
+    assert_eq!(description, "Loose work");
+}
+
+#[test]
+fn an_empty_default_changelist_has_nothing_to_submit() {
+    let mut app = on_default();
+    app.files.clear();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(app.editor.is_none());
+    assert!(app.confirm.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("no files")));
 }
 
 #[test]
@@ -1528,6 +1582,12 @@ fn d_in_files_reverts_after_confirming_and_naming_the_files() {
     app.last_request();
 
     press(&mut app, KeyCode::Char('d'));
+    assert!(
+        app.confirm.is_none(),
+        "the question waits on the server's own account of the damage"
+    );
+    allow_revert(&mut app);
+
     let confirm = app.confirm.as_ref().expect("a confirmation is required");
     assert_eq!(confirm.title, "Revert 1 file(s)?");
     assert!(
@@ -1554,12 +1614,70 @@ fn reverting_a_directory_takes_everything_under_it() {
     press(&mut app, KeyCode::Char('j')); // Actors/
 
     press(&mut app, KeyCode::Char('d'));
+    allow_revert(&mut app);
     press(&mut app, KeyCode::Char('y'));
 
     let Some(Request::RevertFiles { files }) = app.last_request() else {
         panic!("expected a revert");
     };
     assert_eq!(files.len(), 2);
+}
+
+#[test]
+fn the_revert_confirmation_lists_what_the_server_would_do() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('v'));
+    press(&mut app, KeyCode::Char('j')); // both files in the changelist
+    press(&mut app, KeyCode::Char('d'));
+
+    let Some(Request::PreviewRevert { files }) = app.last_request() else {
+        panic!("expected a revert preview");
+    };
+    assert_eq!(files.len(), 2);
+
+    // The server has since seen one of them closed, so it would revert one.
+    app.handle(Event::RevertPreview {
+        files: files.clone(),
+        preview: vec![p4::RevertPreview {
+            depot_path: "//darksim/main/Foo.cpp".into(),
+            action: FileAction::Edit,
+        }],
+    });
+
+    let confirm = app.confirm.as_ref().expect("a confirmation is required");
+    assert_eq!(confirm.title, "Revert 1 file(s)?");
+    assert!(
+        confirm.lines.iter().any(|l| l.contains("Foo.cpp")),
+        "{:?}",
+        confirm.lines
+    );
+    assert!(
+        !confirm.lines.iter().any(|l| l.contains("AGENTS.md")),
+        "what the server would not touch must not be listed: {:?}",
+        confirm.lines
+    );
+}
+
+#[test]
+fn a_revert_the_server_would_do_nothing_about_says_so() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('d'));
+
+    let Some(Request::PreviewRevert { files }) = app.last_request() else {
+        panic!("expected a revert preview");
+    };
+    app.handle(Event::RevertPreview {
+        files,
+        preview: Vec::new(),
+    });
+
+    assert!(app.confirm.is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("would revert nothing")));
 }
 
 #[test]

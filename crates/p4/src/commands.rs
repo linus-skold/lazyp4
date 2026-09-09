@@ -454,6 +454,41 @@ impl Client {
         Ok(())
     }
 
+    /// Submit everything open in the default changelist.
+    ///
+    /// The default changelist is not a spec and carries no description, so one
+    /// has to be given here. `p4 submit` with no `-c` takes whatever is open in
+    /// it, which is why the caller has to show that list first.
+    pub fn submit_default(&mut self, description: &str) -> Result<()> {
+        self.run("submit", &["-d", description])?;
+        Ok(())
+    }
+
+    /// What `p4 revert` would actually do, without doing it.
+    ///
+    /// The server's own account, which is stronger than the file list the
+    /// caller already holds: it drops anything that is not open here and names
+    /// the action each file would be closed from.
+    pub fn revert_preview(&mut self, paths: &[&str]) -> Result<Vec<RevertPreview>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut args = vec!["-n"];
+        args.extend_from_slice(paths);
+        // A file with nothing to revert is a warning, not a failure.
+        let out = self.run_raw("revert", &args, "")?;
+        Ok(out
+            .records
+            .iter()
+            .filter_map(|rec| {
+                Some(RevertPreview {
+                    depot_path: rec.field("depotFile")?.to_owned(),
+                    action: rec.field("action").unwrap_or("edit").parse().unwrap(),
+                })
+            })
+            .collect())
+    }
+
     /// Throw away the local changes to open files and close them.
     ///
     /// Irreversible: the workspace copy of an edited file is overwritten with
