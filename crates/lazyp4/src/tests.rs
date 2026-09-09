@@ -2062,6 +2062,74 @@ fn space_on_an_untracked_file_opens_it_for_add_by_local_path() {
 }
 
 #[test]
+fn the_first_look_at_the_workspace_is_not_a_change() {
+    let mut app = app();
+    app.last_request();
+
+    app.poll_external();
+    assert!(matches!(app.last_request(), Some(Request::CheckExternal)));
+
+    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    assert!(app.notice.is_none());
+    assert!(app.last_request().is_none(), "nothing to reload yet");
+}
+
+#[test]
+fn p4_used_in_another_window_reloads_and_says_so() {
+    let mut app = app();
+    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    app.last_request();
+
+    app.handle(Event::External("edit //darksim/main/Foo.cpp\nedit //darksim/main/Bar.cpp".into()));
+
+    assert!(matches!(app.last_request(), Some(Request::Refresh)));
+    assert!(app
+        .notice
+        .as_deref()
+        .is_some_and(|n| n.contains("outside lazyp4")));
+}
+
+#[test]
+fn an_unchanged_workspace_is_left_alone() {
+    let mut app = app();
+    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    app.last_request();
+
+    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+
+    assert!(app.last_request().is_none());
+    assert!(app.notice.is_none());
+}
+
+#[test]
+fn our_own_write_is_not_reported_back_as_an_external_change() {
+    let mut app = app();
+    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+
+    // A move of our own; the next poll sees a workspace that has moved.
+    app.handle(Event::Changed);
+    app.last_request();
+    app.handle(Event::External("edit //darksim/main/Foo.cpp\nedit //darksim/main/Bar.cpp".into()));
+
+    assert!(app.notice.is_none(), "we did that ourselves");
+    assert!(app.last_request().is_none());
+}
+
+#[test]
+fn nothing_is_polled_while_a_question_is_open() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('c')); // raises a submit confirmation
+    app.last_request();
+
+    app.poll_external();
+    assert!(
+        app.last_request().is_none(),
+        "the ground must not move under a decision"
+    );
+}
+
+#[test]
 fn u_starts_one_scan_at_a_time() {
     let mut app = app();
     press(&mut app, KeyCode::Char('u'));

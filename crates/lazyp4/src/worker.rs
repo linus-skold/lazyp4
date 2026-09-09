@@ -76,6 +76,8 @@ pub enum Request {
     /// Walk the workspace for files that differ but are not open. Slow, so it
     /// only runs when the user asks.
     ScanWorkspace,
+    /// Cheap check for `p4` having been used outside lazyp4.
+    CheckExternal,
     SetDescription {
         change: ChangeId,
         description: String,
@@ -180,6 +182,9 @@ pub enum Event {
     },
     /// Files the workspace scan turned up.
     Scanned(Vec<FileEntry>),
+    /// A fingerprint of what is open in the workspace. Only its changing
+    /// matters, so the app keeps the last one and compares.
+    External(String),
     History {
         depot_path: String,
         revisions: Vec<Revision>,
@@ -423,6 +428,22 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                         let _ = events.send(Event::Error(format!("status: {e}")));
                     }
                 }
+            }
+            Request::CheckExternal => {
+                // Deliberately not logged: this runs on a timer, and a poll in
+                // the command log every few seconds would bury what the user
+                // actually did. `opened` is workspace-scoped and cheap, unlike
+                // the `status` walk behind `u`.
+                if let Ok(files) = p4.opened(None) {
+                    let mut marks: Vec<String> = files
+                        .iter()
+                        .map(|f| format!("{}:{}:{}", f.change, f.action, f.depot_path))
+                        .collect();
+                    marks.sort();
+                    let _ = events.send(Event::External(marks.join("\n")));
+                }
+                // No `Idle`: a poll must not clear a spinner it never raised.
+                continue;
             }
             Request::MoveFiles { change, files } => {
                 move_files(p4, &events, change, &files);

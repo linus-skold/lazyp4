@@ -281,6 +281,10 @@ pub struct App {
     /// Advances while a command is in flight, so the spinner turns.
     pub spinner: usize,
 
+    /// What was open in the workspace when it was last looked at. `None` until
+    /// the first poll answers, so starting up is not read as a change.
+    external: Option<String>,
+
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
     /// The last error, shown in the status bar until something replaces it.
@@ -334,6 +338,7 @@ impl App {
             notice: None,
             zoom: false,
             spinner: 0,
+            external: None,
             filters: HashMap::new(),
             filtering: None,
             diffs: Vec::new(),
@@ -555,6 +560,41 @@ impl App {
         self.spinner = self.spinner.wrapping_add(1);
     }
 
+    /// Look for `p4` having been used outside lazyp4.
+    ///
+    /// Only while the app is sitting still: an answer that arrives mid-edit or
+    /// mid-question would move the ground under whatever is being decided.
+    pub fn poll_external(&mut self) {
+        if self.busy
+            || self.modal != Modal::None
+            || self.editor.is_some()
+            || self.picker.is_some()
+            || self.confirm.is_some()
+            || self.filtering.is_some()
+        {
+            return;
+        }
+        self.worker.send(Request::CheckExternal);
+    }
+
+    /// Reload if the workspace has moved since the last look.
+    fn saw_external(&mut self, fingerprint: String) {
+        let first = self.external.is_none();
+        if self.external.as_deref() == Some(fingerprint.as_str()) {
+            return;
+        }
+        self.external = Some(fingerprint);
+        if first {
+            return;
+        }
+
+        self.notice = Some("the workspace changed outside lazyp4 — reloaded".into());
+        self.files_for = None;
+        self.diffs_for = None;
+        self.busy = true;
+        self.worker.send(Request::Refresh);
+    }
+
     /// The command currently running, for the busy line.
     pub fn running(&self) -> Option<&str> {
         self.log.last().map(String::as_str)
@@ -627,12 +667,16 @@ impl App {
                 self.scanned = files;
                 self.merge_scanned();
             }
+            Event::External(fingerprint) => self.saw_external(fingerprint),
             Event::Changed => {
                 // A write can add or empty the default changelist and can
                 // rewrite a description, so reload the lists too, not just the
                 // files.
                 self.files_for = None;
                 self.diffs_for = None;
+                // Our own write moved the workspace; re-baseline silently
+                // rather than announcing it back to the person who did it.
+                self.external = None;
                 self.busy = true;
                 self.worker.send(Request::Refresh);
             }
