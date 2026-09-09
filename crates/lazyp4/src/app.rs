@@ -1,6 +1,6 @@
 //! Application state and key routing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use p4::{ChangeId, ChangeStatus, Changelist, FileDiff, Revision, ServerInfo};
@@ -11,7 +11,7 @@ use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
 
 /// The panels, in tab order. The layout runs top to bottom down the left
 /// column, with the diff filling the right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Panel {
     Status,
     Files,
@@ -236,6 +236,12 @@ pub struct App {
     pub history_path: String,
     pub history_scroll: usize,
 
+    /// Text each list panel is filtered by. Kept per panel so moving between
+    /// them does not lose what you narrowed to.
+    filters: HashMap<Panel, String>,
+    /// The panel whose filter is being typed, if any.
+    pub filtering: Option<Panel>,
+
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
     /// The last error, shown in the status bar until something replaces it.
@@ -275,6 +281,8 @@ impl App {
             history: Vec::new(),
             history_path: String::new(),
             history_scroll: 0,
+            filters: HashMap::new(),
+            filtering: None,
             diffs: Vec::new(),
             diffs_for: None,
             diff_scroll: 0,
@@ -323,11 +331,38 @@ impl App {
         }
     }
 
-    /// Pending changelists shown by the current tab.
+    /// What a panel is currently narrowed to.
+    pub fn filter(&self, panel: Panel) -> &str {
+        self.filters.get(&panel).map(String::as_str).unwrap_or("")
+    }
+
+    /// Case-insensitive substring match, which is what `/` is for: narrowing a
+    /// long list quickly, not writing a pattern.
+    fn matches(filter: &str, haystack: &str) -> bool {
+        filter.is_empty() || haystack.to_lowercase().contains(&filter.to_lowercase())
+    }
+
+    fn changelist_matches(&self, panel: Panel, cl: &Changelist) -> bool {
+        let filter = self.filter(panel);
+        Self::matches(filter, &cl.id.to_string())
+            || Self::matches(filter, &cl.user)
+            || Self::matches(filter, &cl.description)
+    }
+
+    /// Pending changelists shown by the current tab, after any filter.
     pub fn tab_changes(&self) -> Vec<&Changelist> {
         self.pending
             .iter()
             .filter(|cl| self.belongs_in(cl, self.tab))
+            .filter(|cl| self.changelist_matches(Panel::Changelists, cl))
+            .collect()
+    }
+
+    /// Submitted changelists after any filter.
+    pub fn visible_submitted(&self) -> Vec<&Changelist> {
+        self.submitted
+            .iter()
+            .filter(|cl| self.changelist_matches(Panel::History, cl))
             .collect()
     }
 
@@ -342,7 +377,7 @@ impl App {
     /// The changelist the Files and Diff panels are following.
     pub fn selected_change(&self) -> Option<Changelist> {
         match self.change_source {
-            Panel::History => self.submitted.get(self.history_sel).cloned(),
+            Panel::History => self.visible_submitted().get(self.history_sel).map(|cl| (*cl).clone()),
             _ => self.tab_changes().get(self.change_sel).map(|cl| (*cl).clone()),
         }
     }
@@ -400,9 +435,11 @@ impl App {
         let split = self.files.len();
 
         let subtree = |group: Group, offset: usize, files: &[FileEntry]| -> Vec<FileRow<'_>> {
+            let filter = self.filter(Panel::Files);
             let entries: Vec<tree::Entry> = files
                 .iter()
                 .enumerate()
+                .filter(|(_, f)| Self::matches(filter, &f.depot_path))
                 .map(|(i, f)| tree::Entry {
                     index: offset + i,
                     path: tree::relative(&f.depot_path, &root),
@@ -565,6 +602,11 @@ impl App {
             return;
         }
 
+        if let Some(panel) = self.filtering {
+            self.filter_key(panel, key.code);
+            return;
+        }
+
         if self.picker.is_some() {
             self.pick_key(key.code);
             return;
@@ -616,6 +658,7 @@ impl App {
             KeyCode::Char('s') => self.shelve_changelist(),
             KeyCode::Char('S') => self.unshelve_changelist(),
             KeyCode::Char('D') => self.delete_shelf(),
+            KeyCode::Char('/') => self.start_filter(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -703,6 +746,47 @@ impl App {
         self.error = None;
         self.editor = Some(Editor::new("Description of the new changelist", ""));
         self.editing = Some(Editing::NewChange(PostCreate::Nothing));
+    }
+
+    /// Start narrowing the focused list.
+    fn start_filter(&mut self) {
+        if !matches!(
+            self.focus,
+            Panel::Files | Panel::Changelists | Panel::History
+        ) {
+            self.error = Some("that panel is not a list".into());
+            return;
+        }
+        self.error = None;
+        self.filtering = Some(self.focus);
+    }
+
+    /// Keys while a filter is being typed. The list narrows as you go, so
+    /// there is nothing to submit — Enter just stops typing.
+    fn filter_key(&mut self, panel: Panel, code: KeyCode) {
+        match code {
+            KeyCode::Esc => {
+                // Esc undoes the narrowing rather than keeping it, so a filter
+                // is never left on a panel you have stopped looking at.
+                self.filters.remove(&panel);
+                self.filtering = None;
+            }
+            KeyCode::Enter => self.filtering = None,
+            KeyCode::Backspace => {
+                let text = self.filters.entry(panel).or_default();
+                text.pop();
+            }
+            KeyCode::Char(c) => {
+                self.filters.entry(panel).or_default().push(c);
+            }
+            _ => return,
+        }
+        // Whatever was selected may no longer be in the list.
+        self.clamp_selections();
+        self.file_sel = self
+            .file_sel
+            .min(self.selectable_count().saturating_sub(1));
+        self.follow_selection();
     }
 
     /// Copy the selected changelist's open files to the server as a shelf.
@@ -1214,7 +1298,7 @@ impl App {
         let (sel, len) = match self.focus {
             Panel::Files => (self.file_sel, self.selectable_count()),
             Panel::Changelists => (self.change_sel, self.tab_changes().len()),
-            Panel::History => (self.history_sel, self.submitted.len()),
+            Panel::History => (self.history_sel, self.visible_submitted().len()),
             Panel::Status | Panel::Diff => return,
         };
         if len == 0 {
@@ -1233,7 +1317,7 @@ impl App {
         let len = match self.focus {
             Panel::Files => self.selectable_count(),
             Panel::Changelists => self.tab_changes().len(),
-            Panel::History => self.submitted.len(),
+            Panel::History => self.visible_submitted().len(),
             Panel::Status | Panel::Diff => return,
         };
         if len == 0 {
@@ -1274,7 +1358,9 @@ impl App {
         self.change_sel = self
             .change_sel
             .min(self.tab_changes().len().saturating_sub(1));
-        self.history_sel = self.history_sel.min(self.submitted.len().saturating_sub(1));
+        self.history_sel = self
+            .history_sel
+            .min(self.visible_submitted().len().saturating_sub(1));
     }
 
     /// Point the Files panel at whichever changelist is now selected.

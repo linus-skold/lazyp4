@@ -234,10 +234,15 @@ fn draw_editor(frame: &mut Frame, editor: &Editor) {
 
 fn panel_block(app: &App, panel: Panel, extra: Option<String>) -> Block<'static> {
     let focused = app.focus == panel;
-    let name = match extra {
+    let mut name = match extra {
         Some(e) => format!("{} {e} ", panel.title()),
         None => format!("{} ", panel.title()),
     };
+    // A narrowed list looks like a short one, so say what is hiding the rest.
+    let filter = app.filter(panel);
+    if !filter.is_empty() {
+        name.push_str(&format!("/{filter} "));
+    }
     Block::bordered()
         .border_style(Style::default().fg(if focused { FOCUS } else { IDLE }))
         // The number is the key that focuses this panel; the title is the only
@@ -350,12 +355,12 @@ fn tab_bar(app: &App) -> Line<'static> {
 }
 
 fn draw_history(frame: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app
-        .submitted
+    let visible = app.visible_submitted();
+    let items: Vec<ListItem> = visible
         .iter()
         .map(|cl| change_item(cl, app.my_client()))
         .collect();
-    let count = format!("({})", app.submitted.len());
+    let count = format!("({})", visible.len());
     let mut state = ListState::default().with_selected(Some(app.history_sel));
     frame.render_stateful_widget(
         List::new(items)
@@ -661,6 +666,25 @@ fn short_path(depot_path: &str) -> &str {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    // Typing a filter takes over the bar, the way `/` does in a pager.
+    if let Some(panel) = app.filtering {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" /{}", app.filter(panel)),
+                    Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("█", Style::default().fg(FOCUS)),
+                Span::styled(
+                    "   Enter keep   Esc clear",
+                    Style::default().fg(IDLE),
+                ),
+            ])),
+            area,
+        );
+        return;
+    }
+
     let line = match (&app.error, app.busy) {
         (Some(err), _) => Line::from(Span::styled(
             format!(" {} ", err.replace('\n', " ")),
@@ -728,6 +752,7 @@ fn draw_help(frame: &mut Frame) {
         ("g / G", "first / last"),
         ("Tab", "cycle panels"),
         ("[ ]", "switch tab"),
+        ("/", "narrow the list"),
     ];
     navigation.extend(panels.iter().map(|(n, t)| (n.as_str(), *t)));
 

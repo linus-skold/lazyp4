@@ -674,6 +674,145 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
     assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
 }
 
+fn type_filter(app: &mut App, text: &str) {
+    press(app, KeyCode::Char('/'));
+    for c in text.chars() {
+        press(app, KeyCode::Char(c));
+    }
+}
+
+#[test]
+fn slash_narrows_the_files_panel() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+
+    type_filter(&mut app, "door");
+    let out = render(&app, 120, 40);
+    assert!(out.contains("Door.cpp"), "{out}");
+    assert!(out.contains("Door.h"), "{out}");
+    assert!(!out.contains("Tool.cpp"), "the rest is hidden\n{out}");
+    assert!(!out.contains("README.md"), "{out}");
+}
+
+#[test]
+fn filtering_is_case_insensitive() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    type_filter(&mut app, "DOOR");
+    assert!(render(&app, 120, 40).contains("Door.cpp"));
+}
+
+#[test]
+fn the_filter_shows_in_the_panel_title() {
+    // A narrowed list looks like a short one otherwise.
+    let mut app = nested();
+    app.focus = Panel::Files;
+    type_filter(&mut app, "door");
+    assert!(render(&app, 120, 40).contains("/door"));
+}
+
+#[test]
+fn enter_keeps_the_filter_and_esc_clears_it() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+
+    type_filter(&mut app, "door");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.filtering.is_none(), "typing has stopped");
+    assert_eq!(app.filter(Panel::Files), "door", "but the list stays narrowed");
+
+    press(&mut app, KeyCode::Char('/'));
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.filter(Panel::Files), "");
+    assert!(render(&app, 120, 40).contains("Tool.cpp"), "everything is back");
+}
+
+#[test]
+fn backspace_widens_the_filter_again() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    type_filter(&mut app, "doorx");
+    assert!(!render(&app, 120, 40).contains("Door.cpp"), "nothing matches");
+
+    press(&mut app, KeyCode::Backspace);
+    assert!(render(&app, 120, 40).contains("Door.cpp"));
+}
+
+#[test]
+fn a_filter_swallows_keys_that_are_commands_elsewhere() {
+    let mut app = nested();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('/'));
+    app.last_request();
+
+    for c in ['d', 'c', 'q', 's'] {
+        press(&mut app, KeyCode::Char(c));
+    }
+
+    assert!(!app.quit, "q is filter text, not quit");
+    assert!(app.confirm.is_none(), "d did not start a revert");
+    assert_eq!(app.filter(Panel::Files), "dcqs");
+}
+
+#[test]
+fn each_panel_keeps_its_own_filter() {
+    let mut app = app();
+
+    app.focus = Panel::Changelists;
+    type_filter(&mut app, "interaction");
+    press(&mut app, KeyCode::Enter);
+
+    app.focus = Panel::History;
+    type_filter(&mut app, "p4ignore");
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(app.filter(Panel::Changelists), "interaction");
+    assert_eq!(app.filter(Panel::History), "p4ignore");
+
+    let ids: Vec<String> = app.tab_changes().iter().map(|c| c.id.to_string()).collect();
+    assert_eq!(ids, ["308"], "matched on the description");
+}
+
+#[test]
+fn a_changelist_filter_matches_number_user_or_description() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+
+    type_filter(&mut app, "395");
+    assert_eq!(app.tab_changes().len(), 1, "by number");
+
+    press(&mut app, KeyCode::Esc);
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char(']'));
+    press(&mut app, KeyCode::Char(']')); // Others
+    type_filter(&mut app, "sarwag");
+    assert_eq!(app.tab_changes().len(), 1, "by user");
+}
+
+#[test]
+fn narrowing_past_the_selection_does_not_leave_it_stranded() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('G')); // the last changelist
+    let before = app.change_sel;
+    assert!(before > 0);
+
+    type_filter(&mut app, "395");
+    assert_eq!(app.tab_changes().len(), 1);
+    assert_eq!(app.change_sel, 0, "the cursor moves into the shorter list");
+    assert_eq!(app.selected_change().unwrap().id, ChangeId::Number(395));
+}
+
+#[test]
+fn the_diff_panel_has_no_list_to_filter() {
+    let mut app = app();
+    app.focus = Panel::Diff;
+    press(&mut app, KeyCode::Char('/'));
+
+    assert!(app.filtering.is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("not a list")));
+}
+
 /// Sitting on 166, the fixture's shelved changelist.
 fn on_shelved() -> App {
     let mut app = app();
@@ -1592,6 +1731,11 @@ fn key_release_events_are_ignored() {
 #[test]
 #[ignore = "prints the layout for inspection"]
 fn preview() {
+    let mut filtering = nested();
+    filtering.focus = Panel::Files;
+    type_filter(&mut filtering, "door");
+    println!("{}\n", render(&filtering, 92, 16));
+
     let mut helping = app();
     helping.focus = Panel::Files;
     press(&mut helping, KeyCode::Char('?'));

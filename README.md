@@ -172,6 +172,7 @@ the changelist is left exactly as the server sent it.
 | `g` `G` | first, last |
 | `Tab`, `Shift-Tab` | cycle panels |
 | `[` `]` | switch tab within a panel |
+| `/` | narrow the focused list — `Enter` keeps it, `Esc` clears it |
 | `e` | edit the changelist description |
 | `n` | new changelist |
 | `c` | submit the changelist |

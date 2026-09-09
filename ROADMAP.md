@@ -81,11 +81,9 @@ Four of the seven are done. What is left:
    is only worth doing for the whole-workspace case.
 6. **A cheaper scan.** `u` walks the whole workspace. `p4 status -f <dir>` scoped
    to the selected file's directory would make it usable mid-task.
-7. **Filtering.** lazygit's `/` filters the panel. With hundreds of open files in
-   an Unreal workspace this matters more here than it does in git.
-
 Done: **3** a target that does not exist yet, via the move picker; **4** shorter
-paths, via the folding tree; **5** discard, via `d` in Files.
+paths, via the folding tree; **5** discard, via `d` in Files; **7** filtering,
+via `/` on any list panel.
 
 ## C. Shelving
 
@@ -158,7 +156,7 @@ What is left:
 3. **D** — resolve, which unblocks submit in the conflict case and is the
    largest thing still missing.
 4. **B1** — multi-select, so every verb takes a range rather than one row.
-5. **B6**, **B7** — cheaper scan, filtering.
+5. **B6** — a scan scoped to a directory, rather than the whole workspace.
 6. **A leftovers** — routing a failed submit into D, submitting the default
    changelist, `p4 revert -n` as a stronger confirmation.
 7. **E** — streams and `p4 sync`, which has no equivalent at all.
