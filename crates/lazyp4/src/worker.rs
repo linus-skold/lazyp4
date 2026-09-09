@@ -9,7 +9,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use p4::{
-    diff, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection, FileAction,
+    diff, AnnotatedLine, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection,
+    FileAction,
     FileDiff, Resolution, RevertPreview, Revision, ServerInfo, Stream, Unresolved,
 };
 
@@ -120,6 +121,10 @@ pub enum Request {
     LoadHistory {
         depot_path: String,
     },
+    /// Who last wrote each line of a file.
+    LoadBlame {
+        depot_path: String,
+    },
     Sync,
     LoadStreams,
     SwitchStream {
@@ -178,6 +183,10 @@ pub enum Event {
     History {
         depot_path: String,
         revisions: Vec<Revision>,
+    },
+    Blame {
+        depot_path: String,
+        lines: Vec<AnnotatedLine>,
     },
     Unresolved(Vec<Unresolved>),
     /// What a revert would do, with the files it was asked about carried back
@@ -521,6 +530,17 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                     }
                     Err(e) => {
                         let _ = events.send(Event::Error(format!("filelog: {e}")));
+                    }
+                }
+            }
+            Request::LoadBlame { depot_path } => {
+                let _ = events.send(Event::Log(format!("annotate -c -u -q {depot_path}")));
+                match p4.annotate(&depot_path) {
+                    Ok(lines) => {
+                        let _ = events.send(Event::Blame { depot_path, lines });
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("annotate: {e}")));
                     }
                 }
             }

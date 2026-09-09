@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use p4::{
-    ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, RevertPreview, Revision, ServerInfo,
-    Stream, Unresolved,
+    AnnotatedLine, ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, RevertPreview,
+    Revision, ServerInfo, Stream, Unresolved,
 };
 
 use crate::editor::{Editor, Outcome};
@@ -180,6 +180,8 @@ pub enum Modal {
     Log,
     /// Revision history of one file.
     History,
+    /// Who last wrote each line of one file.
+    Blame,
     /// Files that must be resolved before they can be submitted.
     Resolve,
     /// The depot's streams, and which one this workspace is on.
@@ -247,6 +249,11 @@ pub struct App {
     /// Cursor within those revisions. Distinct from `history_sel`, which is the
     /// History *panel*'s cursor over submitted changelists.
     pub history_rev_sel: usize,
+
+    /// Line-by-line authorship of the file the Blame modal is showing.
+    pub blame: Vec<AnnotatedLine>,
+    pub blame_path: String,
+    pub blame_sel: usize,
 
     /// Where a range selection was started, if one is open. The range runs
     /// from here to the cursor, in either direction.
@@ -316,6 +323,9 @@ impl App {
             history: Vec::new(),
             history_path: String::new(),
             history_rev_sel: 0,
+            blame: Vec::new(),
+            blame_path: String::new(),
+            blame_sel: 0,
             select_anchor: None,
             unresolved: Vec::new(),
             unresolved_sel: 0,
@@ -588,6 +598,13 @@ impl App {
                 // Ignore an answer for a file the cursor has since left.
                 if self.history_path == depot_path {
                     self.history = revisions;
+                    self.history_rev_sel = 0;
+                }
+            }
+            Event::Blame { depot_path, lines } => {
+                if self.blame_path == depot_path {
+                    self.blame = lines;
+                    self.blame_sel = 0;
                 }
             }
             Event::Streams(streams) => {
@@ -690,6 +707,7 @@ impl App {
                 KeyCode::Char('x') if self.modal == Modal::Help => self.modal = Modal::Log,
                 KeyCode::Char('x') if self.modal == Modal::Log => self.modal = Modal::Help,
                 _ if self.modal == Modal::History => self.history_key(key.code),
+                _ if self.modal == Modal::Blame => self.blame_key(key.code),
                 _ if self.modal == Modal::Resolve => self.resolve_key(key.code),
                 _ if self.modal == Modal::Streams => self.streams_key(key.code),
                 _ => {}
@@ -718,6 +736,7 @@ impl App {
             KeyCode::Char('d') if self.focus == Panel::Files => self.revert_selected(),
             KeyCode::Char('c') => self.submit_changelist(),
             KeyCode::Char('H') => self.show_history(),
+            KeyCode::Char('a') => self.show_blame(),
             KeyCode::Char('U') => self.undo_change(),
             KeyCode::Char('s') if self.focus == Panel::Files => self.shelve_selected_files(),
             KeyCode::Char('s') => self.shelve_changelist(),
@@ -1123,6 +1142,48 @@ impl App {
         self.error = None;
         self.busy = true;
         self.worker.send(Request::LoadHistory { depot_path });
+    }
+
+    /// Show who last wrote each line of the file under the cursor.
+    fn show_blame(&mut self) {
+        let Some(file) = self.selected_file() else {
+            self.error = Some("select a file to blame it".into());
+            return;
+        };
+        if file.untracked() {
+            // Nothing is on the server to annotate.
+            self.error = Some("that file is not in the depot yet".into());
+            return;
+        }
+        let depot_path = file.depot_path.clone();
+
+        // Keep what is already loaded for this file, so reopening does not
+        // blank the view while the server answers.
+        if self.blame_path != depot_path {
+            self.blame.clear();
+            self.blame_path = depot_path.clone();
+        }
+        self.blame_sel = 0;
+        self.modal = Modal::Blame;
+        self.error = None;
+        self.busy = true;
+        self.worker.send(Request::LoadBlame { depot_path });
+    }
+
+    /// Keys inside the blame view. A file is long, so it pages as well as steps.
+    fn blame_key(&mut self, code: KeyCode) {
+        let last = self.blame.len().saturating_sub(1);
+        let step = |sel: usize, by: isize| (sel as isize + by).clamp(0, last as isize) as usize;
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => self.blame_sel = step(self.blame_sel, 1),
+            KeyCode::Char('k') | KeyCode::Up => self.blame_sel = step(self.blame_sel, -1),
+            KeyCode::PageDown => self.blame_sel = step(self.blame_sel, 20),
+            KeyCode::PageUp => self.blame_sel = step(self.blame_sel, -20),
+            KeyCode::Char('g') | KeyCode::Home => self.blame_sel = 0,
+            KeyCode::Char('G') | KeyCode::End => self.blame_sel = last,
+            KeyCode::Char('a') => self.modal = Modal::None,
+            _ => {}
+        }
     }
 
     /// Keys inside the revision-history view.

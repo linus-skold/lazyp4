@@ -141,14 +141,11 @@ What is left:
 
 ## F. History
 
-Mostly done. Selecting a submitted changelist already points Files and Diff at
+Done. Selecting a submitted changelist already points Files and Diff at
 it, `H` shows a file's revisions, and `U` undoes a submitted change into a new
 pending changelist. `U` inside the `H` view undoes one revision of one file
-instead, into a changelist of its own.
-
-What is left:
-
-- **Annotate.** `p4 annotate` is the blame equivalent and has no UI.
+instead, into a changelist of its own. `a` blames a file line by line with
+`p4 annotate`, naming a change once per run of lines rather than on every line.
 
 ## G. Polish
 

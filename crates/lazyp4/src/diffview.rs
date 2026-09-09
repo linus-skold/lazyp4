@@ -16,7 +16,7 @@ const TAB_WIDTH: usize = 4;
 /// Position-aware rather than a flat substitution: a tab is "advance to the
 /// next multiple of [`TAB_WIDTH`]", so a tab after three characters is one
 /// space, not four.
-fn expand_tabs(text: &str) -> String {
+pub fn expand_tabs(text: &str) -> String {
     if !text.contains('\t') {
         return text.to_owned();
     }

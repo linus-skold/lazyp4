@@ -1499,6 +1499,115 @@ fn history_for_a_file_the_cursor_has_left_is_ignored() {
     assert!(app.history.is_empty());
 }
 
+fn blamed(change: u32, user: &str, text: &str) -> p4::AnnotatedLine {
+    p4::AnnotatedLine {
+        change,
+        user: user.into(),
+        time: Some(1_788_895_733),
+        text: text.into(),
+    }
+}
+
+#[test]
+fn a_blames_the_selected_file_line_by_line() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('a'));
+
+    assert_eq!(app.modal, Modal::Blame);
+    let Some(Request::LoadBlame { depot_path }) = app.last_request() else {
+        panic!("expected an annotate");
+    };
+    assert_eq!(depot_path, "//darksim/main/AGENTS.md");
+
+    app.handle(Event::Blame {
+        depot_path,
+        lines: vec![
+            blamed(390, "sarwag", "# Agents"),
+            blamed(396, "linsko", "\tone rule"),
+        ],
+    });
+    app.handle(Event::Idle);
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("Blame of darksim/main/AGENTS.md"), "{out}");
+    assert!(out.contains("390"), "{out}");
+    assert!(out.contains("sarwag"), "{out}");
+    assert!(out.contains("2026-09-08"), "the date is shown\n{out}");
+    assert!(out.contains("# Agents"), "{out}");
+    assert!(
+        !out.contains('\t'),
+        "a terminal draws a tab as one cell or none\n{out}"
+    );
+}
+
+#[test]
+fn a_run_of_lines_from_one_change_is_named_once() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('a'));
+    app.handle(Event::Blame {
+        depot_path: "//darksim/main/AGENTS.md".into(),
+        lines: vec![
+            blamed(396, "linsko", "first"),
+            blamed(396, "linsko", "second"),
+            blamed(390, "sarwag", "third"),
+        ],
+    });
+
+    let out = render(&app, 120, 40);
+    assert_eq!(out.matches("396").count(), 1, "one heading per run\n{out}");
+    assert_eq!(out.matches("390").count(), 1, "{out}");
+}
+
+#[test]
+fn blame_for_a_file_the_cursor_has_left_is_ignored() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    press(&mut app, KeyCode::Char('a'));
+
+    app.handle(Event::Blame {
+        depot_path: "//darksim/main/Somewhere/Else.cpp".into(),
+        lines: vec![blamed(1, "nobody", "stale")],
+    });
+
+    assert!(app.blame.is_empty());
+}
+
+#[test]
+fn a_file_the_depot_has_never_seen_cannot_be_blamed() {
+    let mut app = app();
+    app.files.clear();
+    app.loose_files = vec![unopened("//darksim/main/New.cpp", FileAction::Add)];
+    app.file_sel = 0;
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('a'));
+
+    assert_eq!(app.modal, Modal::None);
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("not in the depot")));
+}
+
+#[test]
+fn blame_closes_without_quitting() {
+    for key in [KeyCode::Esc, KeyCode::Char('a')] {
+        let mut app = app();
+        app.focus = Panel::Files;
+        press(&mut app, KeyCode::Char('a'));
+        press(&mut app, key);
+
+        assert_eq!(app.modal, Modal::None);
+        assert!(!app.quit);
+    }
+}
+
 #[test]
 fn history_closes_without_quitting() {
     let mut app = app();

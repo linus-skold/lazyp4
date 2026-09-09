@@ -556,6 +556,30 @@ impl Client {
             .map(str::to_owned))
     }
 
+    /// Who last wrote each line of a file — the blame equivalent.
+    ///
+    /// Only submitted content can be annotated: a file opened for add exists
+    /// nowhere the server can look, and it says so.
+    pub fn annotate(&mut self, depot_path: &str) -> Result<Vec<AnnotatedLine>> {
+        // -c reports the change that wrote each line rather than the file
+        // revision, which is the number worth showing; -u adds who and when;
+        // -q drops the banner line.
+        let out = self.run("annotate", &["-c", "-u", "-q", depot_path])?;
+        Ok(out
+            .records
+            .iter()
+            // The leading record names the file and has no line on it.
+            .filter_map(|rec| {
+                Some(AnnotatedLine {
+                    change: rec.parsed("lower")?,
+                    user: rec.field("user").unwrap_or_default().to_owned(),
+                    time: rec.parsed("time"),
+                    text: rec.field("data").unwrap_or_default().to_owned(),
+                })
+            })
+            .collect())
+    }
+
     /// Revision history of one file, newest first.
     pub fn filelog(&mut self, depot_path: &str, max: Option<u32>) -> Result<Vec<Revision>> {
         let m;

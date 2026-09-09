@@ -64,6 +64,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::Help => draw_help(frame),
         Modal::Log => draw_log(frame, app),
         Modal::History => draw_file_history(frame, app),
+        Modal::Blame => draw_blame(frame, app),
         Modal::Resolve => draw_resolve(frame, app),
         Modal::Streams => draw_streams(frame, app),
     }
@@ -195,6 +196,79 @@ fn draw_resolve(frame: &mut Frame, app: &App) {
     }
 
     let mut state = ListState::default().with_selected(Some(app.unresolved_sel));
+    frame.render_stateful_widget(
+        List::new(items).block(block).highlight_style(selection_style(true)),
+        area,
+        &mut state,
+    );
+}
+
+fn draw_blame(frame: &mut Frame, app: &App) {
+    // Runs of lines from the same change read as one block, so the change is
+    // named on its first line only and the rest of the block stays quiet.
+    let mut previous: Option<u32> = None;
+    let width = (app.blame.len().to_string().len()).max(3);
+    let items: Vec<ListItem> = app
+        .blame
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let same = previous == Some(line.change);
+            previous = Some(line.change);
+            let head = if same {
+                " ".repeat(30)
+            } else {
+                format!(
+                    "{:>8} {:<10.10} {:<10}",
+                    line.change,
+                    line.user,
+                    line.time.map(p4::civil_date).unwrap_or_default()
+                )
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    head,
+                    Style::default().fg(if same { IDLE } else { Color::Cyan }),
+                ),
+                Span::styled(
+                    format!(" {:>width$} ", i + 1),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw(diffview::expand_tabs(&line.text)),
+            ]))
+        })
+        .collect();
+
+    let area = frame.area();
+    let area = centered(
+        area,
+        area.width.saturating_sub(4),
+        area.height.saturating_sub(4).max(6),
+    );
+
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(FOCUS))
+        .title(Span::styled(
+            format!(" Blame of {} ", short_path(&app.blame_path)),
+            Style::default().fg(FOCUS).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " j / k   g / G   a close ",
+            Style::default().fg(IDLE),
+        ));
+
+    if app.blame.is_empty() {
+        frame.render_widget(
+            Paragraph::new(if app.busy { "  loading…" } else { "  nothing to blame" })
+                .style(Style::default().fg(IDLE))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let mut state = ListState::default().with_selected(Some(app.blame_sel));
     frame.render_stateful_widget(
         List::new(items).block(block).highlight_style(selection_style(true)),
         area,
@@ -921,6 +995,7 @@ fn panel_keys(panel: Panel) -> &'static [(&'static str, &'static str)] {
             ("space", "move"),
             ("d", "revert"),
             ("H", "history"),
+            ("a", "blame"),
             ("u", "scan"),
         ],
         Panel::Changelists => &[
@@ -964,6 +1039,7 @@ fn draw_help(frame: &mut Frame) {
                 ("v", "select a range"),
                 ("h / l", "fold a directory"),
                 ("H", "revision history, U to undo one"),
+                ("a", "blame, line by line"),
                 ("u", "scan for unopened changes (slow)"),
             ],
         ),

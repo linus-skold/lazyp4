@@ -226,6 +226,15 @@ pub struct Revision {
     pub description: String,
 }
 
+/// One line of a file, and the change that last wrote it, from `p4 annotate`.
+#[derive(Debug, Clone)]
+pub struct AnnotatedLine {
+    pub change: u32,
+    pub user: String,
+    pub time: Option<i64>,
+    pub text: String,
+}
+
 /// A stream, from `p4 streams`.
 #[derive(Debug, Clone)]
 pub struct Stream {
