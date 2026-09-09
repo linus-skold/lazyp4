@@ -11,3 +11,10 @@ cxx.workspace = true
 
 [build-dependencies]
 cxx-build.workspace = true
+# Builds OpenSSL from source when the machine has no static one to point at.
+# Pinned to the 3.5 series so it matches the `openssl3.5` P4API distribution
+# this build script fetches.
+openssl-src = "300.5"
+# Only to check a download against P4API_SHA256; a C hasher would defeat the
+# point of a build that needs nothing installed.
+sha2 = "0.10"

@@ -1,11 +1,26 @@
 # lazyp4
 
+[![CI](https://github.com/linus-skold/lazyp4/actions/workflows/ci.yml/badge.svg)](https://github.com/linus-skold/lazyp4/actions/workflows/ci.yml)
+
 A terminal UI for Perforce (Helix Core), in the style of lazygit: browse
 changelists and their files in panels, and read diffs in the shell.
 
 You can sync, arrange, shelve, resolve and submit a task without dropping to the
 shell. What is still missing — chiefly a merge tool for conflicts `p4 resolve
 -am` refuses — is in [ROADMAP.md](ROADMAP.md), in the order it is worth doing.
+
+## Install
+
+Take the archive for your platform from
+[Releases](https://github.com/linus-skold/lazyp4/releases) and put the binary on
+your `PATH`. The P4API, OpenSSL and — on Windows — the C runtime are all linked
+statically, so it is one file: no DLLs, no redistributable, and no `p4` on the
+machine.
+
+It does still expect a workspace you have already logged in to. See
+[Connecting](#connecting).
+
+To build it yourself, `cargo build` — see [Build](#build).
 
 ```powershell
 cargo run -p lazyp4
@@ -233,8 +248,23 @@ the changelist is left exactly as the server sent it.
 | `?` | help — every key, grouped; `x` from there opens the p4 command log |
 | `q` | quit |
 
+## Connecting
+
 lazyp4 uses the ambient `P4PORT`, `P4USER` and `P4CLIENT`, so run it from a
 workspace directory with a `p4config.txt` the same way you would run `p4`.
+
+It speaks to the server through the native API rather than through `p4`, but it
+has no `trust` or `login` of its own yet, so on a machine that has never talked
+to your server you still need the `p4` CLI once:
+
+```powershell
+p4 set P4CONFIG=p4config.txt
+p4 trust -y      # only for an ssl: port
+p4 login
+```
+
+After that lazyp4 stands on its own. Closing that gap is on the
+[roadmap](ROADMAP.md).
 
 While it sits still, lazyp4 checks every five seconds whether `p4` has been used
 in another window, and reloads if it has.
@@ -303,58 +333,69 @@ whatever is actually bound.
 
 ## Build
 
-lazyp4 links the Helix Core C++ API directly. That library is not vendored,
-because its licence does not permit redistribution, so you must supply it.
-
-### 1. A C++ toolchain
-
-On Windows this must be MSVC. Rust's default Windows target is
-`x86_64-pc-windows-msvc`, which links the same object format as the P4API
-distribution. MinGW cannot.
-
-### 2. The P4API
-
-Download a distribution from <https://ftp.perforce.com/perforce/> under
-`<release>/bin.<platform>/` and unpack it.
-
-On Windows choose a `static` build — "static" here means the static CRT (`/MT`),
-which the P4API is compiled with — and an `openssl3` suffix, for example
-`p4api_vs2022_static_openssl3.zip`. The directory must contain
-`include/p4/clientapi.h` and `lib/`.
-
-### 3. OpenSSL 3
-
-The P4API archive references OpenSSL but does not ship it, so `librpc` leaves
-the `EVP_*` and `OPENSSL_*` symbols unresolved on its own. Supply a static
-OpenSSL 3 build in the same CRT mode as the P4API — on Windows, `/MT`.
-
-`scoop install openssl` puts one in `lib`, alongside the import libraries;
-`vcpkg install openssl:x64-windows-static` works too.
-
-### 4. Point the build at both
-
-Where these two sit is a property of your machine, not of this project, so the
-repo does not carry the paths. Put them in the `[env]` table of your **own**
-`~/.cargo/config.toml` — `%USERPROFILE%\.cargo\config.toml` on Windows — which
-cargo applies to every shell and IDE:
-
-```toml
-[env]
-P4API_DIR = "C:\\path\\to\\p4api-2025.1.xxxxxxx-vs2022_static"
-OPENSSL_LIB_DIR = "C:\\Users\\you\\scoop\\apps\\openssl\\current\\lib"
-```
-
-Exporting either variable works too, and wins over that file.
-
-### 5. Build
-
 ```powershell
 cargo build
 ```
 
-The repo's `.cargo/config.toml` holds one line that is not a machine setting:
-`+crt-static` on the MSVC target. Every object in the binary must agree on the
-CRT and the P4API distribution picks `/MT`, so that has to hold for everyone.
+That is the whole thing. You need Rust, a C++ toolchain and Perl; the build
+script fetches everything else.
+
+### What it needs installed
+
+| | |
+| --- | --- |
+| Rust | stable |
+| A C++ toolchain | MSVC on Windows — Rust's `x86_64-pc-windows-msvc` target links the same object format the P4API ships, and MinGW cannot |
+| Perl | OpenSSL's `Configure` is a Perl script. Windows: `scoop install perl` |
+| `curl` and `tar` | already on Windows 10 and later, macOS and Linux |
+
+NASM is optional. `openssl-src` finds it if it is there and turns on OpenSSL's
+assembly routines; without it the build is slower but identical.
+
+### What it fetches
+
+**The P4API**, from `https://ftp.perforce.com/perforce/r25.1/`, picking the
+archive for your target — the `static` (static CRT) `openssl3.5` build on
+Windows, the `glibc2.12` build on Linux x86_64. It is not vendored: its licence
+does not permit redistribution, and the Windows distribution alone is 410 MB of
+static libraries, two of whose archives are past GitHub's per-file limit.
+
+**OpenSSL 3.5**, built from source by `openssl-src`. The P4API references
+OpenSSL but does not ship it, so `librpc` leaves the `EVP_*` and `OPENSSL_*`
+symbols unresolved on its own. Building it here also settles the CRT question:
+`openssl-src` follows the target's `crt-static`, so it cannot disagree with the
+`/MT` the P4API was compiled with.
+
+The first build takes a few minutes for the download and a few more for
+OpenSSL. Both are cached — the P4API under `%LOCALAPPDATA%\lazyp4\p4api` or
+`~/.cache/lazyp4/p4api`, which survives `cargo clean`.
+
+### If you would rather supply them yourself
+
+Any of these turns the matching step off. Put them in the `[env]` table of your
+**own** `~/.cargo/config.toml` — `%USERPROFILE%\.cargo\config.toml` on Windows
+— so they reach every shell and IDE, or export them.
+
+| Variable | Effect |
+| --- | --- |
+| `P4API_DIR` | Use this unpacked distribution; download nothing. Must hold `include/p4/clientapi.h` and `lib/` |
+| `OPENSSL_LIB_DIR` | Link the static OpenSSL in this directory instead of building one |
+| `P4API_URL` | Fetch this archive rather than the one picked for the target |
+| `P4API_SHA256` | Refuse the download unless it hashes to this. The build prints the hash it saw, so pinning one is a copy and paste |
+| `P4API_CACHE_DIR` | Keep downloads here |
+
+Perforce refreshes these archives in place within a release line, so a pinned
+hash will eventually fail on a legitimately newer build. That is why it is
+offered rather than required: HTTPS to Perforce's own host is the default trust
+anchor.
+
+### The one thing the repo does pin
+
+`.cargo/config.toml` sets `+crt-static` on the MSVC target. That is not a
+machine setting or a preference — every object in the binary has to agree about
+the CRT, and the P4API picks `/MT` — so it has to hold for everyone, and it
+cannot live in `build.rs` because a build script cannot set a target feature
+for the crate graph.
 
 ## Verify the connection
 

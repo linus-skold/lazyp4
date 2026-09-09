@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and publish
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lazyp4-windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: lazyp4.exe
+          - name: lazyp4-linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: lazyp4
+          - name: lazyp4-macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            binary: lazyp4
+          - name: lazyp4-macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            binary: lazyp4
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache the P4API
+        uses: actions/cache@v4
+        with:
+          path: .p4api
+          key: p4api-${{ matrix.name }}-r25.1
+
+      # No target cache here. A release is rare, and building OpenSSL from
+      # source rather than restoring it is the more trustworthy of the two.
+      - name: Build
+        shell: bash
+        env:
+          P4API_CACHE_DIR: ${{ github.workspace }}/.p4api
+        run: cargo build --release --target ${{ matrix.target }} -p lazyp4
+
+      # The P4API, OpenSSL and — on Windows — the CRT are all linked
+      # statically, so what comes out is one file with nothing beside it.
+      - name: Stage the binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${{ matrix.binary }}"
+          cp README.md LICENSE dist/ 2>/dev/null || cp README.md dist/
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "../${{ matrix.name }}.zip" ./*
+          else
+            tar -czf "../${{ matrix.name }}.tar.gz" ./*
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ matrix.name }}.zip
+            ${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: artifacts/*

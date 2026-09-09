@@ -175,12 +175,17 @@ dropping to the shell.
 
 What remains, in the order it is worth doing:
 
-1. **A merge tool** for what `resolve -am` refuses. Needs the machinery for
+1. **`trust` and `login`.** lazyp4 drives the native API, so it needs no `p4`
+   binary — except that it cannot accept an SSL fingerprint or get a ticket, so
+   a machine that has never reached the server still needs `p4 trust` and
+   `p4 login` once. `p4-sys` already exposes `set_password`; nothing calls it.
+   This is what stands between a release build and a tool you can hand someone.
+2. **A merge tool** for what `resolve -am` refuses. Needs the machinery for
    leaving the alternate screen and coming back, which went with the external
    diff viewer. Until then a real conflict has nowhere to go.
-2. **B6** — a scan scoped to a directory rather than the whole workspace.
-3. **B2** — `p4 reopen -c <cl> //...` for the whole workspace at once.
-4. Multi-select in the resolve view, and the **C** leftovers: `-f` when
+3. **B6** — a scan scoped to a directory rather than the whole workspace.
+4. **B2** — `p4 reopen -c <cl> //...` for the whole workspace at once.
+5. Multi-select in the resolve view, and the **C** leftovers: `-f` when
    unshelving somebody else's shelf, and deleting single files from a shelf.
 
 ## Non-goals

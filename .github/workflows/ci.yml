@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keeps the P4API download out of the workspace so the two caches below do
+  # not overlap.
+  P4API_CACHE_DIR: ${{ github.workspace }}/.p4api
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x86_64
+            os: windows-latest
+          - name: linux-x86_64
+            os: ubuntu-latest
+          - name: macos-arm64
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # The P4API archive is ~74 MB and fixed for a release, so it is worth
+      # keeping between runs.
+      - name: Cache the P4API
+        uses: actions/cache@v4
+        with:
+          path: .p4api
+          key: p4api-${{ matrix.name }}-r25.1
+
+      # `target` whole, rather than Swatinem/rust-cache, on purpose: OpenSSL is
+      # compiled from source into p4-sys's OUT_DIR, and rust-cache prunes
+      # workspace-member build output. Losing it would mean rebuilding OpenSSL
+      # every run.
+      - name: Cache cargo and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ matrix.name }}-
+
+      # OpenSSL's Configure is a Perl script. Every runner already has Perl;
+      # NASM only makes the build faster, so it is not installed.
+      - name: Check the toolchain
+        shell: bash
+        run: |
+          perl --version | sed -n 2p
+          curl --version | head -n 1
+          tar --version | head -n 1
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Test
+        run: cargo test
+
+      # Not -D warnings: the tree carries a few that predate this workflow, and
+      # failing on them would say nothing about the change under test.
+      - name: Clippy
+        run: cargo clippy --all-targets
