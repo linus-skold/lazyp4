@@ -92,7 +92,7 @@ impl ChangeTab {
 }
 
 /// Which half of the Files panel a row belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Group {
     /// Open in the selected changelist.
     InChange,
@@ -205,9 +205,10 @@ pub struct App {
     /// Result of the last workspace scan, merged into `loose_files`.
     pub scanned: Vec<FileEntry>,
     pub scanning: bool,
-    /// Directory paths whose contents are hidden. Shared by both groups, so a
-    /// directory reads the same way wherever it appears.
-    collapsed: HashSet<String>,
+    /// Directory paths whose contents are hidden, per group. The two groups
+    /// are separate trees: the same directory can hold different files in
+    /// each, so folding one must not fold the other.
+    collapsed: HashSet<(Group, String)>,
 
     /// Diffs for the whole selected changelist, keyed by `diffs_for`.
     pub diffs: Vec<FileDiff>,
@@ -396,7 +397,9 @@ impl App {
                 })
                 .collect();
 
-            tree::build(&entries, &self.collapsed)
+            tree::build(&entries, &|path: &str| {
+                self.collapsed.contains(&(group, path.to_owned()))
+            })
                 .into_iter()
                 .map(|row| match row.node {
                     tree::Node::Dir {
@@ -883,14 +886,21 @@ impl App {
 
     /// Expand or collapse the selected directory. Does nothing on a file.
     fn toggle_collapse(&mut self, want_collapsed: Option<bool>) {
-        let Some(FileRow::Dir { path, collapsed, .. }) = self.selected_row() else {
+        let Some(FileRow::Dir {
+            group,
+            path,
+            collapsed,
+            ..
+        }) = self.selected_row()
+        else {
             return;
         };
         let collapse = want_collapsed.unwrap_or(!collapsed);
+        let key = (group, path);
         if collapse {
-            self.collapsed.insert(path);
+            self.collapsed.insert(key);
         } else {
-            self.collapsed.remove(&path);
+            self.collapsed.remove(&key);
         }
         // Rows above the cursor never move, so the selection stays put.
         self.file_sel = self.file_sel.min(self.selectable_count().saturating_sub(1));

@@ -5,7 +5,7 @@
 //! directory once, on its own row, and indents its contents one level beneath
 //! it.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 /// A file to place in the tree, and where the caller can find it again.
 pub struct Entry<'a> {
@@ -64,9 +64,12 @@ impl Dir {
     }
 }
 
-/// Build the visible rows. `collapsed` holds directory paths whose contents are
-/// hidden.
-pub fn build(entries: &[Entry<'_>], collapsed: &HashSet<String>) -> Vec<Row> {
+/// Build the visible rows. `collapsed` answers whether a directory path's
+/// contents are hidden.
+///
+/// A predicate rather than a set, because the caller may draw several trees
+/// that share directory names without sharing their fold state.
+pub fn build(entries: &[Entry<'_>], collapsed: &dyn Fn(&str) -> bool) -> Vec<Row> {
     let mut root = Dir::default();
     for entry in entries {
         root.insert(entry.index, entry.path);
@@ -77,10 +80,16 @@ pub fn build(entries: &[Entry<'_>], collapsed: &HashSet<String>) -> Vec<Row> {
     rows
 }
 
-fn flatten(dir: &Dir, prefix: &str, depth: usize, collapsed: &HashSet<String>, out: &mut Vec<Row>) {
+fn flatten(
+    dir: &Dir,
+    prefix: &str,
+    depth: usize,
+    collapsed: &dyn Fn(&str) -> bool,
+    out: &mut Vec<Row>,
+) {
     for (name, child) in &dir.dirs {
         let path = format!("{prefix}{name}");
-        let is_collapsed = collapsed.contains(&path);
+        let is_collapsed = collapsed(&path);
         out.push(Row {
             depth,
             label: format!("{name}/"),
@@ -149,8 +158,7 @@ mod tests {
             .enumerate()
             .map(|(index, path)| Entry { index, path })
             .collect();
-        let set: HashSet<String> = collapsed.iter().map(|s| (*s).to_owned()).collect();
-        build(&entries, &set)
+        build(&entries, &|path: &str| collapsed.contains(&path))
     }
 
     fn labels(rows: &[Row]) -> Vec<String> {

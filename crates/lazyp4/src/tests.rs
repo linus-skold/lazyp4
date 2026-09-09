@@ -23,6 +23,9 @@ fn app() -> App {
         host: MINE.into(),
         server_address: "ssl:example:1666".into(),
         server_version: "P4D/LINUX/2024.2".into(),
+        // Pinned so the tree root does not shift with the files under test:
+        // without a stream it is whatever directory they happen to share.
+        stream: Some("//darksim/main".into()),
         ..Default::default()
     }));
     app.handle(Event::Changes {
@@ -437,6 +440,49 @@ fn collapsing_a_directory_hides_its_files() {
 
     press(&mut app, KeyCode::Char('l'));
     assert!(render(&app, 120, 40).contains("Door.cpp"), "and come back");
+}
+
+#[test]
+fn folding_a_directory_leaves_the_same_name_in_the_other_group_alone() {
+    // The two groups are separate trees; a directory can hold different files
+    // in each, so their fold state is separate too.
+    let mut app = app();
+    app.files = vec![file("//darksim/main/Config/A.ini", FileAction::Edit, false)];
+    app.loose_files = vec![file("//darksim/main/Config/B.ini", FileAction::Edit, false)];
+    app.file_sel = 0;
+    app.focus = Panel::Files;
+
+    // Row 0 is the changelist group's Config/.
+    press(&mut app, KeyCode::Enter);
+
+    let out = render(&app, 120, 40);
+    assert!(!out.contains("A.ini"), "the folded group is hidden\n{out}");
+    assert!(
+        out.contains("B.ini"),
+        "the other group's Config/ stays open\n{out}"
+    );
+}
+
+#[test]
+fn each_group_remembers_its_own_folds() {
+    let mut app = app();
+    app.files = vec![file("//darksim/main/Config/A.ini", FileAction::Edit, false)];
+    app.loose_files = vec![file("//darksim/main/Config/B.ini", FileAction::Edit, false)];
+    app.file_sel = 0;
+    app.focus = Panel::Files;
+
+    press(&mut app, KeyCode::Enter); // fold the changelist group
+    press(&mut app, KeyCode::Char('j')); // onto the default group's Config/
+    press(&mut app, KeyCode::Enter); // fold that one too
+
+    let out = render(&app, 120, 40);
+    assert!(!out.contains("A.ini"), "{out}");
+    assert!(!out.contains("B.ini"), "{out}");
+
+    press(&mut app, KeyCode::Enter); // unfold only the default group
+    let out = render(&app, 120, 40);
+    assert!(!out.contains("A.ini"), "the first stays folded\n{out}");
+    assert!(out.contains("B.ini"), "{out}");
 }
 
 #[test]
