@@ -1,13 +1,13 @@
-# The P4API static distribution is built against the static CRT (/MT), so every
-# object in the final binary must agree. Rust defaults to /MD on MSVC.
+# Not a machine setting: every object in the binary has to agree about the CRT.
+#
+# The P4API static distribution is built against the static CRT (/MT) and Rust
+# defaults to /MD on MSVC, so this has to hold for every build of this project
+# on every machine. It cannot move to build.rs — a build script cannot set a
+# target feature for the crate graph — so it lives here rather than in each
+# developer's RUSTFLAGS.
+#
+# Where the P4API and OpenSSL actually sit *is* a machine setting, so it is not
+# here. Put P4API_DIR and OPENSSL_LIB_DIR in an [env] table in your own
+# ~/.cargo/config.toml, or export them. See the Build section of README.md.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
-
-# Where p4-sys/build.rs looks for the two libraries this project cannot vendor.
-#
-# These are defaults, not overrides: cargo only applies an entry here when the
-# variable is absent from the environment, so exporting either one wins. Set
-# them to suit your machine — see the Build section of README.md.
-[env]
-P4API_DIR = "C:\\Users\\Linus\\Development\\p4api\\p4api-2025.1.3042095-vs2022_static"
-OPENSSL_LIB_DIR = "C:\\Users\\Linus\\scoop\\apps\\openssl\\current\\lib"

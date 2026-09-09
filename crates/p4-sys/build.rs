@@ -2,8 +2,9 @@ use std::env;
 use std::path::PathBuf;
 
 const WHERE: &str = "\
-Set it in the [env] table of .cargo/config.toml, which applies to every shell
-and IDE, or export it to override what that file says.";
+Export it, or — so it applies to every shell and IDE — put it in the [env]
+table of your own ~/.cargo/config.toml. It is deliberately not in the repo:
+where these libraries sit is a property of the machine, not of the project.";
 
 const HELP: &str = "\
 set P4API_DIR to an unpacked Helix Core C++ API distribution.

@@ -333,7 +333,10 @@ OpenSSL 3 build in the same CRT mode as the P4API — on Windows, `/MT`.
 
 ### 4. Point the build at both
 
-`.cargo/config.toml` carries the two paths:
+Where these two sit is a property of your machine, not of this project, so the
+repo does not carry the paths. Put them in the `[env]` table of your **own**
+`~/.cargo/config.toml` — `%USERPROFILE%\.cargo\config.toml` on Windows — which
+cargo applies to every shell and IDE:
 
 ```toml
 [env]
@@ -341,9 +344,7 @@ P4API_DIR = "C:\\path\\to\\p4api-2025.1.xxxxxxx-vs2022_static"
 OPENSSL_LIB_DIR = "C:\\Users\\you\\scoop\\apps\\openssl\\current\\lib"
 ```
 
-Edit them to suit your machine. They are defaults rather than overrides: cargo
-skips an entry that is already in the environment, so exporting `P4API_DIR` or
-`OPENSSL_LIB_DIR` takes precedence without touching the file.
+Exporting either variable works too, and wins over that file.
 
 ### 5. Build
 
@@ -351,8 +352,9 @@ skips an entry that is already in the environment, so exporting `P4API_DIR` or
 cargo build
 ```
 
-`.cargo/config.toml` sets `+crt-static` on the MSVC target. Every object in the
-binary must agree on the CRT, and the P4API distribution picks `/MT`.
+The repo's `.cargo/config.toml` holds one line that is not a machine setting:
+`+crt-static` on the MSVC target. Every object in the binary must agree on the
+CRT and the P4API distribution picks `/MT`, so that has to hold for everyone.
 
 ## Verify the connection
 
