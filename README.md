@@ -5,7 +5,8 @@ changelists and their files in panels, and read diffs in the shell.
 
 Status: early. You can browse pending, shelved and submitted changelists, read
 each file's diff in the pane, move files between changelists, and edit
-changelist descriptions. Submitting is not wired up yet.
+changelist descriptions. Submitting is not wired up yet — see
+[ROADMAP.md](ROADMAP.md) for what is missing and in what order.
 
 ```powershell
 cargo run -p lazyp4
