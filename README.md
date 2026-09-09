@@ -63,19 +63,20 @@ changelist, and the default changelist below it. `Space` moves the file under
 the cursor across the divider — into the changelist, or back out to default.
 
 Each group is a tree rooted at the depot root — the stream when the workspace
-has one, otherwise the deepest directory the listed files share. Directories
-with a single child are folded into one row, so a deep path reads as
-`Source/Darksim/Actors/` rather than three rows of one entry each.
+has one, otherwise the deepest directory the listed files share. Every
+directory gets its own row, with its contents one level to the right, and the
+number of files beneath it:
 
 ```text
  In changelist 395
    ▾ Source/ 3
-     ▾ Darksim/Actors/ 2
-M      Door.cpp
-M      Door.h
+     ▾ Darksim/ 2
+       ▾ Actors/ 2
+M          Door.cpp
+M          Door.h
      ▾ Editor/ 1
-A      Tool.cpp
-M  README.md
+A        Tool.cpp
+M    README.md
 ```
 
 `h` and `l` fold and unfold a directory, as does `Enter`. `Space` on a

@@ -2,11 +2,8 @@
 //!
 //! Depot paths are long and share a deep prefix, so a flat list pushes the part
 //! that distinguishes two files off the right edge. The tree shows each
-//! directory once and indents beneath it.
-//!
-//! Chains of directories with a single child are folded into one row —
-//! `Source/Darksim/Actors/` rather than three rows of one entry each — which is
-//! what makes a deep tree readable.
+//! directory once, on its own row, and indents its contents one level beneath
+//! it.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -82,29 +79,19 @@ pub fn build(entries: &[Entry<'_>], collapsed: &HashSet<String>) -> Vec<Row> {
 
 fn flatten(dir: &Dir, prefix: &str, depth: usize, collapsed: &HashSet<String>, out: &mut Vec<Row>) {
     for (name, child) in &dir.dirs {
-        // Fold a run of single-child directories into one row.
-        let mut label = name.clone();
-        let mut node = child;
-        while node.files.is_empty() && node.dirs.len() == 1 {
-            let (only_name, only) = node.dirs.iter().next().expect("one child");
-            label.push('/');
-            label.push_str(only_name);
-            node = only;
-        }
-
-        let path = format!("{prefix}{label}");
+        let path = format!("{prefix}{name}");
         let is_collapsed = collapsed.contains(&path);
         out.push(Row {
             depth,
-            label: format!("{label}/"),
+            label: format!("{name}/"),
             node: Node::Dir {
                 path: path.clone(),
-                files: node.count(),
+                files: child.count(),
                 collapsed: is_collapsed,
             },
         });
         if !is_collapsed {
-            flatten(node, &format!("{path}/"), depth + 1, collapsed, out);
+            flatten(child, &format!("{path}/"), depth + 1, collapsed, out);
         }
     }
 
@@ -183,13 +170,22 @@ mod tests {
     }
 
     #[test]
-    fn folds_a_chain_of_single_child_directories() {
+    fn every_directory_gets_its_own_row() {
         let out = rows(&["Source/Darksim/Actors/Door.cpp"], &[]);
-        assert_eq!(labels(&out), ["Source/Darksim/Actors/", "  Door.cpp"]);
+        assert_eq!(
+            labels(&out),
+            [
+                "Source/",
+                "  Darksim/",
+                "    Actors/",
+                "      Door.cpp"
+            ],
+            "a chain of single-child directories is not collapsed into one row"
+        );
     }
 
     #[test]
-    fn stops_folding_where_the_tree_branches() {
+    fn siblings_sit_at_the_same_depth() {
         let out = rows(&["Source/Darksim/A.cpp", "Source/Editor/B.cpp"], &[]);
         assert_eq!(
             labels(&out),
@@ -218,13 +214,16 @@ mod tests {
     }
 
     #[test]
-    fn collapsing_uses_the_folded_path() {
-        // The row reads `Source/Darksim/Actors/`, so that is its identity.
+    fn a_directory_deep_in_the_tree_can_be_collapsed_on_its_own() {
         let out = rows(
             &["Source/Darksim/Actors/Door.cpp"],
             &["Source/Darksim/Actors"],
         );
-        assert_eq!(labels(&out), ["Source/Darksim/Actors/"]);
+        assert_eq!(
+            labels(&out),
+            ["Source/", "  Darksim/", "    Actors/"],
+            "its ancestors stay open"
+        );
     }
 
     #[test]

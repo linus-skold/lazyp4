@@ -408,11 +408,15 @@ fn nested() -> App {
 #[test]
 fn files_are_shown_as_a_tree_below_the_depot_root() {
     let out = render(&nested(), 120, 40);
-    // Directories are folded where they have a single child, and the shared
-    // depot prefix is gone.
+    // Each directory is its own row and the shared depot prefix is gone.
     assert!(out.contains("Source/"), "{out}");
-    assert!(out.contains("Darksim/Actors/"), "{out}");
+    assert!(out.contains("Darksim/"), "{out}");
+    assert!(out.contains("Actors/"), "{out}");
     assert!(out.contains("Door.cpp"), "{out}");
+    assert!(
+        !out.contains("Darksim/Actors/"),
+        "directories are not stacked onto one row\n{out}"
+    );
     assert!(
         !out.contains("//darksim/main/Source"),
         "the root prefix should not be repeated on every row\n{out}"
@@ -458,12 +462,13 @@ fn space_on_a_directory_moves_everything_under_it() {
     app.focus = Panel::Files;
     app.last_request();
 
-    // Source/Darksim/Actors/ — step past Source/ and Darksim/Actors/ is next.
+    // Source/ then Darksim/ then Actors/, each on its own row.
+    press(&mut app, KeyCode::Char('j'));
     press(&mut app, KeyCode::Char('j'));
     let Some(FileRow::Dir { label, .. }) = app.selected_row() else {
         panic!("expected a directory row");
     };
-    assert_eq!(label, "Darksim/Actors/");
+    assert_eq!(label, "Actors/");
 
     press(&mut app, KeyCode::Char(' '));
     let Some(Request::MoveFiles { change, files }) = app.last_request() else {

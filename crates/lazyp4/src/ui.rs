@@ -297,8 +297,10 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// Two columns of marker, then the indent, so every name starts at the same
-/// depth-dependent column and the markers line up down the left.
+/// Every row is laid out the same way: a three-column gutter holding the file's
+/// action mark, the depth indent, then a two-column slot for the fold arrow —
+/// blank on a file. That slot is what puts a directory's contents one level to
+/// the right of its name.
 fn indent(depth: usize) -> String {
     "  ".repeat(depth)
 }
@@ -334,6 +336,8 @@ fn file_item(f: &FileEntry, label: &str, depth: usize) -> ListItem<'static> {
         ),
         Span::raw(" "),
         Span::raw(indent(depth)),
+        // The slot a directory row uses for its arrow.
+        Span::raw("  "),
         Span::styled(
             label.to_owned(),
             // A file that is not open is not part of any changelist yet.
