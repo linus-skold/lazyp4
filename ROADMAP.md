@@ -8,13 +8,17 @@ command that actually does the job.
 
 | Working | Notes |
 | --- | --- |
-| Five panels, numbered, `Tab` and `[`/`]` navigation | Status, Files, Changelists, History, Diff |
-| Changelist tabs — Local, Shelved, Others | Ownership by user |
+| Five panels, numbered `1`–`4` and `0` | Status, Files, Changelists, History, Diff |
+| Changelist tabs — Local, Shelved, Others | Ownership by user, `[`/`]` |
 | The default changelist, synthesised | `p4 changes` never reports it |
-| Inline diff with line numbers and word-level highlighting | No external viewer |
-| `Space` moves one file between default and a changelist | `reopen`, or `add`/`edit`/`delete` first |
-| `u` scans the workspace for unopened changes | `p4 status`, ~40 s on a large tree |
+| Files as a folding tree rooted at the stream | Per-group fold state |
+| Inline diff, line numbers, word-level highlighting, tabs expanded | No external viewer |
+| `Space` moves a file or a whole directory | `reopen`, or `add`/`edit`/`delete` first |
+| A picker when there is no implied destination | Including a changelist created on the spot |
+| `n` new changelist, `d` delete an empty one | |
+| `c` submit, `d` revert | Both behind a confirmation with no default answer |
 | `e` edits a changelist description | Rewrites one spec field |
+| `u` scans the workspace for unopened changes | `p4 status`, ~40 s on a large tree |
 | Command log (`x`), help (`?`) | Every P4API call is logged |
 
 The `p4` crate also has `filelog` and `print_text` wired up but nothing in the
@@ -67,23 +71,21 @@ What is left here:
 
 ## B. The file flow
 
-The current `Space`-moves-one-file loop is the weakest part of the app.
+Four of the seven are done. What is left:
 
 1. **Multi-select.** lazygit stages a range with `v` then movement. Without it,
-   moving thirty files is thirty keystrokes. Everything in A and C should accept
-   a selection, not just the cursor line.
+   moving thirty scattered files is thirty keystrokes. Every verb — `Space`,
+   `d`, and shelving when it arrives — should take a selection, not one row.
 2. **Move all.** lazygit's `a` stages everything. `p4 reopen -c <cl> //...` does
-   it in one command. `Space` on a directory already covers the common case.
-3. ~~**A target that does not exist yet.**~~ Done — `Space` on the default
-   changelist offers a picker, including a new changelist created on the spot.
-4. ~~**Shorter paths.**~~ Done — the panel is a folding tree rooted at the
-   stream.
-5. **Discard.** There is no way to undo an `add` or throw away a local edit —
-   see `revert` in A.
+   it in one command. `Space` on a directory covers most of this already, so it
+   is only worth doing for the whole-workspace case.
 6. **A cheaper scan.** `u` walks the whole workspace. `p4 status -f <dir>` scoped
    to the selected file's directory would make it usable mid-task.
 7. **Filtering.** lazygit's `/` filters the panel. With hundreds of open files in
    an Unreal workspace this matters more here than it does in git.
+
+Done: **3** a target that does not exist yet, via the move picker; **4** shorter
+paths, via the folding tree; **5** discard, via `d` in Files.
 
 ## C. Shelving
 
@@ -145,15 +147,17 @@ The History panel lists submitted changelists but does nothing with them.
 - Auto-refresh after external `p4` use.
 - `.p4ignore` editing, matching lazygit's `i`.
 
-## Suggested order
+## What is left, in order
 
-1. ~~**A**~~ and ~~**B3**, **B4**~~ — done. lazyp4 can now finish a task.
-2. **B1** — multi-select, so submit, revert and move all take a range rather
-   than one row. `Space` and `d` on a directory cover part of this already.
-3. **C** — shelving, which completes the tab that already exists.
-4. **B5–B7** — cheaper scan, filtering.
+1. ~~**A**~~, ~~**B3**~~, ~~**B4**~~, ~~**B5**~~ — done. lazyp4 can finish a task.
+2. **B1** — multi-select, so every verb takes a range rather than one row.
+3. **C** — shelving, which completes a tab that today shows work you cannot act
+   on. Five commands and no new UI ideas, so the best value for its size.
+4. **B6**, **B7** — cheaper scan, filtering.
 5. **D** — resolve, which unblocks submit in the conflict case.
-6. **E**, **F**, **G**.
+6. **A leftovers** — routing a failed submit into D, submitting the default
+   changelist, `p4 revert -n` as a stronger confirmation.
+7. **E**, **F**, **G**.
 
 ## Non-goals
 
