@@ -1040,6 +1040,7 @@ fn draw_help(frame: &mut Frame) {
                 ("h / l", "fold a directory"),
                 ("H", "revision history, U to undo one"),
                 ("a", "blame, line by line"),
+                ("i", "ignore an untracked file"),
                 ("u", "scan for unopened changes (slow)"),
             ],
         ),

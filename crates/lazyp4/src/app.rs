@@ -668,6 +668,19 @@ impl App {
                 self.merge_scanned();
             }
             Event::External(fingerprint) => self.saw_external(fingerprint),
+            Event::Ignored {
+                depot_path,
+                pattern,
+                file,
+            } => {
+                // The rule only takes effect on the next scan, so drop the row
+                // now rather than leaving it there looking unignored.
+                self.scanned.retain(|f| f.depot_path != depot_path);
+                self.merge_scanned();
+                self.file_sel = self.file_sel.min(self.selectable_count().saturating_sub(1));
+                self.notice = Some(format!("added {pattern} to {file}"));
+                self.error = None;
+            }
             Event::Changed => {
                 // A write can add or empty the default changelist and can
                 // rewrite a description, so reload the lists too, not just the
@@ -781,6 +794,7 @@ impl App {
             KeyCode::Char('c') => self.submit_changelist(),
             KeyCode::Char('H') => self.show_history(),
             KeyCode::Char('a') => self.show_blame(),
+            KeyCode::Char('i') => self.ignore_selected(),
             KeyCode::Char('U') => self.undo_change(),
             KeyCode::Char('s') if self.focus == Panel::Files => self.shelve_selected_files(),
             KeyCode::Char('s') => self.shelve_changelist(),
@@ -1186,6 +1200,48 @@ impl App {
         self.error = None;
         self.busy = true;
         self.worker.send(Request::LoadHistory { depot_path });
+    }
+
+    /// Add the file under the cursor to the workspace ignore file.
+    ///
+    /// Only a file Perforce has never seen: an ignore rule does nothing about
+    /// one that is already tracked.
+    fn ignore_selected(&mut self) {
+        if self.focus != Panel::Files {
+            return;
+        }
+        let Some(file) = self.selected_file() else {
+            self.error = Some("select a file to ignore".into());
+            return;
+        };
+        if !file.untracked() {
+            self.error = Some("that file is already under Perforce control".into());
+            return;
+        }
+        let (Some(local), Some(root)) = (
+            file.local_path.clone(),
+            self.info.as_ref().and_then(|i| i.client_root.clone()),
+        ) else {
+            self.error = Some("no workspace root to write an ignore file in".into());
+            return;
+        };
+        let depot_path = file.depot_path.clone();
+
+        // P4IGNORE can also be set in a P4CONFIG file, which lazyp4 cannot
+        // read; the default is what Perforce itself falls back to.
+        let name = std::env::var("P4IGNORE").unwrap_or_else(|_| ".p4ignore".to_owned());
+        let Some((file, pattern)) = ignore_entry(&root, &name, &local) else {
+            self.error = Some("that file is outside the workspace".into());
+            return;
+        };
+
+        self.error = None;
+        self.busy = true;
+        self.worker.send(Request::Ignore {
+            file,
+            pattern,
+            depot_path,
+        });
     }
 
     /// Show who last wrote each line of the file under the cursor.
@@ -1891,6 +1947,31 @@ impl App {
 pub fn has_description(description: &str) -> bool {
     let text = description.trim();
     !text.is_empty() && text != "<saved by Perforce>"
+}
+
+/// Where the ignore file lives, and the pattern that names `local` inside it.
+///
+/// `P4IGNORE` may be a bare file name, which Perforce looks for from each
+/// file's directory upwards, or a path. lazyp4 writes to the one in the
+/// workspace root, which is where a shared ignore file belongs. `None` when the
+/// file is not inside the workspace at all.
+pub fn ignore_entry(root: &str, name: &str, local: &str) -> Option<(String, String)> {
+    let slashes = |s: &str| s.replace('\\', "/");
+    let file = if std::path::Path::new(name).is_absolute() {
+        slashes(name)
+    } else {
+        format!("{}/{name}", slashes(root).trim_end_matches('/'))
+    };
+
+    let root = slashes(root);
+    let root = root.trim_end_matches('/');
+    let local = slashes(local);
+    // Windows spells the same path in several cases, so compare loosely.
+    let head = local.get(..root.len())?;
+    if !head.eq_ignore_ascii_case(root) || local.as_bytes().get(root.len()) != Some(&b'/') {
+        return None;
+    }
+    Some((file, local[root.len() + 1..].to_owned()))
 }
 
 /// First line of a description, for a one-line entry.

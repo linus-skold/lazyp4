@@ -151,12 +151,16 @@ instead, into a changelist of its own. `a` blames a file line by line with
 
 - A config file for theme, keybindings and the diff tab width, which is fixed
   at four.
-- `.p4ignore` editing, matching lazygit's `i`.
 
 Done: `/` filtering; a help sheet grouped by panel with the command log behind
 it; `+`/`_` to zoom a panel; the running command named beside a spinner rather
-than a bare "working"; and auto-refresh, which polls `p4 opened` every five
-seconds while the app sits still and reloads when the answer moves.
+than a bare "working"; auto-refresh, which polls `p4 opened` every five seconds
+while the app sits still and reloads when the answer moves; and `i`, which adds
+an untracked file to the workspace ignore file.
+
+`i` writes to the file `P4IGNORE` names in the workspace root. Perforce keeps
+unopened files read-only, so ignoring fails on an ignore file that is in the
+depot and not open for edit; the message says so rather than opening it.
 
 ## What is left, in order
 

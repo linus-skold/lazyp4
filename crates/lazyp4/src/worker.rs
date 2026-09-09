@@ -78,6 +78,13 @@ pub enum Request {
     ScanWorkspace,
     /// Cheap check for `p4` having been used outside lazyp4.
     CheckExternal,
+    /// Append `pattern` to the workspace ignore file at `file`.
+    Ignore {
+        file: String,
+        pattern: String,
+        /// The file the rule is about, so the UI can drop its row.
+        depot_path: String,
+    },
     SetDescription {
         change: ChangeId,
         description: String,
@@ -185,6 +192,12 @@ pub enum Event {
     /// A fingerprint of what is open in the workspace. Only its changing
     /// matters, so the app keeps the last one and compares.
     External(String),
+    /// A pattern reached the ignore file.
+    Ignored {
+        depot_path: String,
+        pattern: String,
+        file: String,
+    },
     History {
         depot_path: String,
         revisions: Vec<Revision>,
@@ -444,6 +457,28 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 }
                 // No `Idle`: a poll must not clear a spinner it never raised.
                 continue;
+            }
+            Request::Ignore {
+                file,
+                pattern,
+                depot_path,
+            } => {
+                match append_line(&file, &pattern) {
+                    Ok(()) => {
+                        let _ = events.send(Event::Ignored {
+                            depot_path,
+                            pattern,
+                            file,
+                        });
+                    }
+                    Err(e) => {
+                        // Perforce keeps unopened files read-only, and a shared
+                        // ignore file is usually one of them.
+                        let _ = events.send(Event::Error(format!(
+                            "{file}: {e} — open it for edit first"
+                        )));
+                    }
+                }
             }
             Request::MoveFiles { change, files } => {
                 move_files(p4, &events, change, &files);
@@ -721,6 +756,30 @@ fn move_files(p4: &mut Client, events: &Sender<Event>, change: ChangeId, files: 
             let _ = events.send(Event::Error(format!("{action}: {e}")));
         }
     }
+}
+
+/// Append one line to a text file, creating it if it is not there.
+fn append_line(path: &str, line: &str) -> std::io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .open(path)?;
+
+    // A file that does not end in a newline would otherwise swallow the new
+    // pattern onto its last line.
+    let len = file.metadata()?.len();
+    if len > 0 {
+        let mut last = [0u8; 1];
+        file.seek(SeekFrom::End(-1))?;
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            file.write_all(b"\n")?;
+        }
+    }
+    writeln!(file, "{line}")
 }
 
 /// Report a failed submit, pointing at the resolve view when that is what went

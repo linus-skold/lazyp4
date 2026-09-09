@@ -8,7 +8,9 @@ use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use crate::app::{has_description, App, ChangeTab, Destination, FileRow, Modal, Panel};
+use crate::app::{
+    has_description, ignore_entry, App, ChangeTab, Destination, FileRow, Modal, Panel,
+};
 use crate::ui;
 use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
 
@@ -20,6 +22,8 @@ fn app() -> App {
         user: "linsko".into(),
         client: MINE.into(),
         client_known: true,
+        // Matches the local paths `unopened` hands out.
+        client_root: Some("E:\\ws".into()),
         host: MINE.into(),
         server_address: "ssl:example:1666".into(),
         server_version: "P4D/LINUX/2024.2".into(),
@@ -2127,6 +2131,105 @@ fn nothing_is_polled_while_a_question_is_open() {
         app.last_request().is_none(),
         "the ground must not move under a decision"
     );
+}
+
+#[test]
+fn an_ignore_pattern_is_the_path_below_the_workspace_root() {
+    let (file, pattern) =
+        ignore_entry("E:\\ws", ".p4ignore", "E:\\ws\\Content\\Big.uasset").unwrap();
+    assert_eq!(file, "E:/ws/.p4ignore");
+    assert_eq!(pattern, "Content/Big.uasset");
+
+    // Windows spells the same path in several cases.
+    assert_eq!(
+        ignore_entry("E:\\WS", ".p4ignore", "e:\\ws\\A.txt").unwrap().1,
+        "A.txt"
+    );
+    // A trailing separator on the root must not double up.
+    assert_eq!(
+        ignore_entry("E:/ws/", ".p4ignore", "E:/ws/A.txt").unwrap().0,
+        "E:/ws/.p4ignore"
+    );
+    // P4IGNORE may name a path rather than a file.
+    assert_eq!(
+        ignore_entry("E:/ws", "D:/shared/ignore.txt", "E:/ws/A.txt").unwrap().0,
+        "D:/shared/ignore.txt"
+    );
+    // Outside the workspace there is no pattern to write.
+    assert!(ignore_entry("E:/ws", ".p4ignore", "C:/elsewhere/A.txt").is_none());
+    assert!(ignore_entry("E:/ws", ".p4ignore", "E:/wsx/A.txt").is_none());
+}
+
+#[test]
+fn i_adds_an_untracked_file_to_the_ignore_file() {
+    let mut app = app();
+    app.files.clear();
+    app.loose_files = vec![unopened("//darksim/main/Big.uasset", FileAction::Add)];
+    app.file_sel = 0;
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('i'));
+
+    let Some(Request::Ignore {
+        file,
+        pattern,
+        depot_path,
+    }) = app.last_request()
+    else {
+        panic!("expected an ignore");
+    };
+    // Whatever P4IGNORE names on the machine running this; the path arithmetic
+    // itself is pinned by `an_ignore_pattern_is_the_path_below_the_workspace_root`.
+    let name = std::env::var("P4IGNORE").unwrap_or_else(|_| ".p4ignore".to_owned());
+    assert!(file.ends_with(&name), "{file}");
+    assert_eq!(pattern, "Big.uasset");
+    assert_eq!(depot_path, "//darksim/main/Big.uasset");
+}
+
+#[test]
+fn an_ignored_file_leaves_the_list_and_the_bar_says_where_it_went() {
+    let mut app = app();
+    app.handle(Event::Scanned(vec![unopened(
+        "//darksim/main/Big.uasset",
+        FileAction::Add,
+    )]));
+    assert!(app
+        .all_files()
+        .iter()
+        .any(|f| f.depot_path.ends_with("Big.uasset")));
+
+    app.handle(Event::Ignored {
+        depot_path: "//darksim/main/Big.uasset".into(),
+        pattern: "Big.uasset".into(),
+        file: "E:/ws/.p4ignore".into(),
+    });
+
+    assert!(
+        !app.all_files()
+            .iter()
+            .any(|f| f.depot_path.ends_with("Big.uasset")),
+        "the rule only bites on the next scan, so the row has to go now"
+    );
+    assert!(app
+        .notice
+        .as_deref()
+        .is_some_and(|n| n.contains("Big.uasset") && n.contains(".p4ignore")));
+}
+
+#[test]
+fn a_file_perforce_already_tracks_cannot_be_ignored() {
+    let mut app = app();
+    app.focus = Panel::Files;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('i'));
+
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("under Perforce control")));
 }
 
 #[test]
