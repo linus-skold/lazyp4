@@ -1,5 +1,3 @@
-//! Milestone 1 gate: prove the FFI, the link and the SSL handshake all work.
-//!
 //! Uses the ambient P4PORT/P4USER/P4CLIENT from the environment, exactly as the
 //! `p4` binary does.
 //!

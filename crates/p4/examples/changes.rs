@@ -1,4 +1,4 @@
-//! Milestone 2 gate: read the workspace through typed commands.
+//! List pending and recently submitted changelists through the typed commands.
 //!
 //! ```text
 //! cargo run -p p4 --example changes
