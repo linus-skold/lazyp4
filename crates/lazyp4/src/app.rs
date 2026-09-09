@@ -260,6 +260,9 @@ pub struct App {
     /// The panel whose filter is being typed, if any.
     pub filtering: Option<Panel>,
 
+    /// Advances while a command is in flight, so the spinner turns.
+    pub spinner: usize,
+
     /// Every command the worker ran, newest last.
     pub log: Vec<String>,
     /// The last error, shown in the status bar until something replaces it.
@@ -305,6 +308,7 @@ impl App {
             streams: Vec::new(),
             streams_sel: 0,
             notice: None,
+            spinner: 0,
             filters: HashMap::new(),
             filtering: None,
             diffs: Vec::new(),
@@ -518,6 +522,16 @@ impl App {
     pub fn selected_diff(&self) -> Option<&FileDiff> {
         let file = self.selected_file()?;
         self.diffs.iter().find(|d| d.depot_path == file.depot_path)
+    }
+
+    /// Nothing arrived; only the spinner moves.
+    pub fn tick(&mut self) {
+        self.spinner = self.spinner.wrapping_add(1);
+    }
+
+    /// The command currently running, for the busy line.
+    pub fn running(&self) -> Option<&str> {
+        self.log.last().map(String::as_str)
     }
 
     pub fn handle(&mut self, event: Event) {

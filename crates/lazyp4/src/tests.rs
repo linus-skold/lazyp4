@@ -685,6 +685,28 @@ fn stream(path: &str, kind: &str) -> p4::Stream {
 }
 
 #[test]
+fn a_running_command_is_named_rather_than_just_working() {
+    let mut app = app();
+    app.handle(Event::Log("status".into()));
+    app.busy = true;
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("p4 status"), "{out}");
+}
+
+#[test]
+fn the_spinner_turns_on_a_tick() {
+    let mut app = app();
+    app.busy = true;
+    app.handle(Event::Log("sync".into()));
+
+    let first = render(&app, 120, 40);
+    app.tick();
+    let second = render(&app, 120, 40);
+    assert_ne!(first, second, "a long command should not look stuck");
+}
+
+#[test]
 fn p_syncs_the_workspace_and_says_what_it_did() {
     let mut app = app();
     app.last_request();

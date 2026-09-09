@@ -16,6 +16,9 @@ use crate::worker::FileEntry;
 const FOCUS: Color = Color::Yellow;
 const IDLE: Color = Color::DarkGray;
 
+/// Braille frames, which turn in place rather than shifting the text after them.
+const SPINNER: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+
 pub fn draw(frame: &mut Frame, app: &App) {
     let [body, status_bar] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
@@ -851,10 +854,18 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             format!(" {} ", app.notice.as_deref().unwrap_or_default()),
             Style::default().fg(Color::Black).bg(Color::Green),
         )),
-        (None, true) => Line::from(Span::styled(
-            " working… ",
-            Style::default().fg(Color::Black).bg(FOCUS),
-        )),
+        // Several commands take tens of seconds, so say which one is running
+        // rather than leaving the UI looking stuck.
+        (None, true) => Line::from(vec![
+            Span::styled(
+                format!(" {} ", SPINNER[app.spinner % SPINNER.len()]),
+                Style::default().fg(Color::Black).bg(FOCUS),
+            ),
+            Span::styled(
+                format!(" p4 {}", app.running().unwrap_or("working")),
+                Style::default().fg(FOCUS),
+            ),
+        ]),
         (None, false) => {
             let mut spans = Vec::new();
             // What the focused panel can do comes first, then the keys that
