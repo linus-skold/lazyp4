@@ -548,6 +548,7 @@ impl App {
                 self.worker.send(Request::Refresh);
             }
             KeyCode::Char('e') => self.edit_description(),
+            KeyCode::Char('n') => self.new_changelist(),
             KeyCode::Char('u') => {
                 if !self.scanning {
                     self.scanning = true;
@@ -627,6 +628,14 @@ impl App {
             .cloned()
             .collect();
         self.loose_files.extend(fresh);
+    }
+
+    /// Create an empty changelist. The same path as creating one to move files
+    /// into, with nothing to move.
+    fn new_changelist(&mut self) {
+        self.error = None;
+        self.editor = Some(Editor::new("Description of the new changelist", ""));
+        self.editing = Some(Editing::NewChange(Vec::new()));
     }
 
     /// Open the description of the selected changelist for editing.

@@ -626,6 +626,25 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
 }
 
 #[test]
+fn n_creates_an_empty_changelist() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('n'));
+
+    let editor = app.editor.as_ref().expect("a description is required");
+    assert_eq!(editor.title, "Description of the new changelist");
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Enter);
+
+    let Some(Request::CreateChange { description, files }) = app.last_request() else {
+        panic!("expected a create");
+    };
+    assert_eq!(description, "x");
+    assert!(files.is_empty(), "nothing is moved into it");
+}
+
+#[test]
 fn esc_closes_the_picker_without_moving_anything() {
     let mut app = on_default();
     press(&mut app, KeyCode::Char(' '));
