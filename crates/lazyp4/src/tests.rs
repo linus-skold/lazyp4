@@ -2556,6 +2556,23 @@ fn e_opens_the_description_of_the_selected_changelist() {
 }
 
 #[test]
+fn a_long_description_wraps_and_scrolls_to_the_cursor() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('e'));
+    for c in "word ".repeat(400).chars().chain("tail".chars()) {
+        press(&mut app, KeyCode::Char(c));
+    }
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("tail"), "what is being typed must stay in view: {out}");
+    assert!(
+        !out.contains("# Do not submit"),
+        "the popup scrolled, so the start is off screen: {out}"
+    );
+}
+
+#[test]
 fn the_editor_takes_keys_that_are_commands_elsewhere() {
     let mut app = app();
     app.focus = Panel::Changelists;
@@ -2918,6 +2935,19 @@ fn renders_in_a_cramped_terminal() {
         let mut app = app();
         app.modal = Modal::Log;
         app.handle(Event::Log("describe -s 395".into()));
+        render(&app, w, h);
+    }
+}
+
+#[test]
+fn the_editor_renders_in_a_cramped_terminal() {
+    for (w, h) in [(40, 12), (20, 8), (12, 4), (80, 24)] {
+        let mut app = app();
+        app.focus = Panel::Changelists;
+        press(&mut app, KeyCode::Char('e'));
+        for c in "a description far wider than the window".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
         render(&app, w, h);
     }
 }

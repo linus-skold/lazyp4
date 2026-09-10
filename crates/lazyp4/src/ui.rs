@@ -430,10 +430,32 @@ fn draw_picker(frame: &mut Frame, t: &Theme, picker: &Picker) {
     );
 }
 
+/// Smallest text area the popup ever gets, so an empty description still looks
+/// like something you can type into.
+const EDITOR_MIN_ROWS: u16 = 5;
+
+/// One visual row of soft-wrapped editor text.
+struct WrapRow {
+    /// Logical line this row came from.
+    line: usize,
+    /// Character offset of the row inside that line.
+    start: usize,
+    text: String,
+}
+
 fn draw_editor(frame: &mut Frame, t: &Theme, editor: &Editor) {
     let width = frame.area().width.saturating_sub(10).min(80).max(20);
-    // Room for the text, the border, and the key hint.
-    let height = (editor.lines().len() as u16 + 3).min(frame.area().height);
+    // The border eats a column on each side; the text has the rest.
+    let text_width = width.saturating_sub(2).max(1);
+
+    let rows = wrap(editor.lines(), text_width as usize);
+    // Grow with the text, but never past a share of the window: the popup is a
+    // popup, not a screen.
+    let max_rows = (frame.area().height * 3 / 5).saturating_sub(2).max(1);
+    // A very short window has no room for the floor, and the ceiling wins.
+    let min_rows = EDITOR_MIN_ROWS.min(max_rows);
+    let text_rows = (rows.len() as u16).clamp(min_rows, max_rows);
+    let height = (text_rows + 2).min(frame.area().height);
     let area = centered(frame.area(), width, height);
 
     frame.render_widget(Clear, area);
@@ -450,13 +472,71 @@ fn draw_editor(frame: &mut Frame, t: &Theme, editor: &Editor) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines: Vec<Line> = editor.lines().iter().map(|l| Line::raw(l.clone())).collect();
-    frame.render_widget(Paragraph::new(lines), inner);
+    let (vrow, vcol) = wrapped_cursor(&rows, editor.cursor());
+    // Scroll only as far as it takes to keep the cursor on screen.
+    let view = inner.height as usize;
+    let offset = vrow.saturating_sub(view.saturating_sub(1));
 
-    let (row, col) = editor.cursor();
-    // Only place the cursor where there is room to draw it.
-    if (row as u16) < inner.height && (col as u16) <= inner.width {
-        frame.set_cursor_position((inner.x + col as u16, inner.y + row as u16));
+    let lines: Vec<Line> = rows.iter().map(|r| Line::raw(r.text.clone())).collect();
+    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), inner);
+
+    if inner.height > 0 && vcol < inner.width as usize {
+        frame.set_cursor_position((
+            inner.x + vcol as u16,
+            inner.y + (vrow - offset).min(view - 1) as u16,
+        ));
+    }
+}
+
+/// Soft-wrap logical lines to `width` characters, breaking at a space when one
+/// is in reach so words stay whole.
+fn wrap(lines: &[String], width: usize) -> Vec<WrapRow> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    for (line, text) in lines.iter().enumerate() {
+        let chars: Vec<char> = text.chars().collect();
+        let mut pos = 0;
+        while pos < chars.len() {
+            let hard = (pos + width).min(chars.len());
+            let end = if hard == chars.len() {
+                hard
+            } else {
+                // Break after the last space in the row; a word longer than the
+                // row has none, so fall back to cutting at the edge.
+                match chars[pos..hard].iter().rposition(|c| c.is_whitespace()) {
+                    Some(i) if i > 0 => pos + i + 1,
+                    _ => hard,
+                }
+            };
+            out.push(WrapRow {
+                line,
+                start: pos,
+                text: chars[pos..end].iter().collect(),
+            });
+            pos = end;
+        }
+        // An empty line, or one that filled its last row exactly, still needs a
+        // row for the cursor to sit on.
+        if chars.is_empty() || out.last().is_some_and(|r| r.text.chars().count() == width) {
+            out.push(WrapRow {
+                line,
+                start: chars.len(),
+                text: String::new(),
+            });
+        }
+    }
+    out
+}
+
+/// Where the logical cursor lands once the text is wrapped.
+fn wrapped_cursor(rows: &[WrapRow], (line, col): (usize, usize)) -> (usize, usize) {
+    let found = rows
+        .iter()
+        .enumerate()
+        .rfind(|(_, r)| r.line == line && r.start <= col);
+    match found {
+        Some((i, r)) => (i, col - r.start),
+        None => (0, 0),
     }
 }
 
@@ -1248,5 +1328,61 @@ fn action_color(t: &Theme, action: &FileAction) -> Color {
         'D' => t.deleted,
         'B' | 'I' => t.integrated,
         _ => t.muted,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(text: &str) -> Vec<String> {
+        text.split('\n').map(str::to_owned).collect()
+    }
+
+    fn texts(rows: &[WrapRow]) -> Vec<&str> {
+        rows.iter().map(|r| r.text.as_str()).collect()
+    }
+
+    #[test]
+    fn a_long_line_wraps_at_a_space() {
+        let rows = wrap(&lines("the quick brown fox"), 10);
+        assert_eq!(texts(&rows), ["the quick ", "brown fox"]);
+        assert!(rows.iter().all(|r| r.line == 0));
+    }
+
+    #[test]
+    fn a_word_longer_than_the_row_is_cut() {
+        let rows = wrap(&lines("supercalifragilistic"), 8);
+        assert_eq!(texts(&rows), ["supercal", "ifragili", "stic"]);
+    }
+
+    #[test]
+    fn every_logical_line_keeps_a_row_of_its_own() {
+        let rows = wrap(&lines("first\n\nthird"), 10);
+        assert_eq!(texts(&rows), ["first", "", "third"]);
+        assert_eq!(rows.iter().map(|r| r.line).collect::<Vec<_>>(), [0, 1, 2]);
+    }
+
+    #[test]
+    fn the_cursor_follows_the_text_onto_the_next_row() {
+        let rows = wrap(&lines("the quick brown fox"), 10);
+        // Column 12 is the "o" of "brown", the third character of row two.
+        assert_eq!(wrapped_cursor(&rows, (0, 12)), (1, 2));
+        // The end of the text sits after the last character.
+        assert_eq!(wrapped_cursor(&rows, (0, 19)), (1, 9));
+    }
+
+    #[test]
+    fn a_full_row_gives_the_cursor_somewhere_to_land() {
+        let rows = wrap(&lines("0123456789"), 10);
+        assert_eq!(texts(&rows), ["0123456789", ""]);
+        assert_eq!(wrapped_cursor(&rows, (0, 10)), (1, 0));
+    }
+
+    #[test]
+    fn wrapping_counts_characters_not_bytes() {
+        let rows = wrap(&lines("ååååå ööööö"), 6);
+        assert_eq!(texts(&rows), ["ååååå ", "ööööö"]);
+        assert_eq!(wrapped_cursor(&rows, (0, 8)), (1, 2));
     }
 }
