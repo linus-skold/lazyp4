@@ -53,6 +53,7 @@ bar show what is actually bound rather than what shipped.
 | --- | --- |
 | `p` | sync the workspace |
 | `b` | list streams, and switch |
+| `w` | list your workspaces, and switch |
 | `R` | resolve files that changed in the depot while open |
 | `r` | refresh |
 | `?` | help |

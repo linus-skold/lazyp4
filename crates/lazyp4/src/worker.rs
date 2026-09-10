@@ -12,7 +12,7 @@ use std::thread;
 use p4::{
     diff, AnnotatedLine, ChangeFilter, ChangeId, ChangeStatus, Changelist, Client, Connection,
     FileAction,
-    FileDiff, Resolution, RevertPreview, Revision, ServerInfo, Stream, Unresolved,
+    FileDiff, Resolution, RevertPreview, Revision, ServerInfo, Stream, Unresolved, Workspace,
 };
 
 /// A file in a changelist, from whichever command could see it.
@@ -143,6 +143,17 @@ pub enum Request {
     SwitchStream {
         stream: String,
     },
+    /// The workspaces to choose between. `owner` narrows to one user's.
+    LoadWorkspaces {
+        owner: Option<String>,
+    },
+    /// Point every later command at another workspace.
+    SwitchWorkspace {
+        client: String,
+        /// The workspace root, so commands that resolve local paths do it
+        /// inside the workspace now being looked at.
+        root: String,
+    },
     LoadUnresolved,
     Resolve {
         how: Resolution,
@@ -218,6 +229,7 @@ pub enum Event {
         preview: Vec<RevertPreview>,
     },
     Streams(Vec<Stream>),
+    Workspaces(Vec<Workspace>),
     /// Something worth saying that is not an error.
     Notice(String),
     /// A write finished. Descriptions and the default changelist's very
@@ -309,6 +321,26 @@ fn spawn_input_reader(events: Sender<Event>) {
     });
 }
 
+/// Point a connection at a chosen workspace, leaving it ambient when there is
+/// none.
+///
+/// The root goes in as the working directory: without it every local path is
+/// still resolved against the directory lazyp4 was started in, which belongs to
+/// a different workspace. A root that is not there is ignored rather than
+/// failing every command — the workspace may simply not be synced on this host.
+fn connection(base: Connection, chosen: Option<&(String, String)>) -> Connection {
+    let Some((client, root)) = chosen else {
+        return base;
+    };
+    Connection {
+        client: Some(client.clone()),
+        cwd: std::path::Path::new(root)
+            .is_dir()
+            .then(|| root.clone()),
+        ..base
+    }
+}
+
 /// Two connections to the same server.
 ///
 /// The server strips diff content out of a tagged reply, and tagging is fixed
@@ -321,10 +353,26 @@ struct Clients {
 
 fn run(requests: Receiver<Request>, events: Sender<Event>) {
     let mut clients: Option<Clients> = None;
+    // The workspace the user picked, replacing the ambient P4CLIENT. `None`
+    // until they pick one, which is the ordinary case.
+    let mut chosen: Option<(String, String)> = None;
 
     while let Ok(req) = requests.recv() {
         if matches!(req, Request::Shutdown) {
             return;
+        }
+
+        // Handled before the connection, because the P4API fixes the client
+        // name during the handshake: the only way to change it is to build the
+        // connection again.
+        if let Request::SwitchWorkspace { client, root } = req {
+            let _ = events.send(Event::Log(format!("reconnect as {client}")));
+            chosen = Some((client.clone(), root));
+            clients = None;
+            let _ = events.send(Event::Notice(format!("switched to {client}")));
+            // Everything on screen belongs to the workspace we just left.
+            let _ = events.send(Event::Changed);
+            continue;
         }
 
         // Connect lazily, and again after the server drops us.
@@ -334,8 +382,8 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
         {
             let _ = events.send(Event::Log("connect".into()));
             match (
-                Client::connect(&Connection::default()),
-                Client::connect(&Connection::untagged()),
+                Client::connect(&connection(Connection::default(), chosen.as_ref())),
+                Client::connect(&connection(Connection::untagged(), chosen.as_ref())),
             ) {
                 (Ok(tagged), Ok(untagged)) => clients = Some(Clients { tagged, untagged }),
                 (Err(e), _) | (_, Err(e)) => {
@@ -558,6 +606,22 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 }
                 let _ = events.send(Event::Changed);
             }
+            Request::LoadWorkspaces { owner } => {
+                let _ = events.send(Event::Log(match &owner {
+                    Some(u) => format!("clients -u {u}"),
+                    None => "clients".into(),
+                }));
+                match p4.clients(owner.as_deref()) {
+                    Ok(workspaces) => {
+                        let _ = events.send(Event::Workspaces(workspaces));
+                    }
+                    Err(e) => {
+                        let _ = events.send(Event::Error(format!("clients: {e}")));
+                    }
+                }
+            }
+            // Dealt with before the connection is made.
+            Request::SwitchWorkspace { .. } => {}
             Request::LoadUnresolved => {
                 let _ = events.send(Event::Log("resolve -n".into()));
                 match p4.unresolved() {

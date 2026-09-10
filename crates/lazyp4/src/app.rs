@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind};
 use p4::{
     AnnotatedLine, ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, RevertPreview,
-    Revision, ServerInfo, Stream, Unresolved,
+    Revision, ServerInfo, Stream, Unresolved, Workspace,
 };
 
 use crate::config::{Action, Config, Key};
@@ -204,6 +204,8 @@ pub enum Modal {
     Resolve,
     /// The depot's streams, and which one this workspace is on.
     Streams,
+    /// The workspaces to look at, and which one is being looked at now.
+    Workspaces,
 }
 
 pub struct App {
@@ -288,6 +290,11 @@ pub struct App {
     /// Streams in the depot, and the cursor within them.
     pub streams: Vec<Stream>,
     pub streams_sel: usize,
+
+    /// Workspaces to switch between, and the cursor within them.
+    pub workspaces: Vec<Workspace>,
+    pub workspaces_sel: usize,
+
     /// Something that went right, shown until something replaces it.
     pub notice: Option<String>,
 
@@ -366,6 +373,8 @@ impl App {
             unresolved_sel: 0,
             streams: Vec::new(),
             streams_sel: 0,
+            workspaces: Vec::new(),
+            workspaces_sel: 0,
             notice: None,
             zoom: false,
             spinner: 0,
@@ -820,6 +829,15 @@ impl App {
                 self.streams = streams;
                 self.streams_sel = self.streams_sel.min(self.streams.len().saturating_sub(1));
             }
+            Event::Workspaces(workspaces) => {
+                // Start on the one being looked at, so the list opens where the
+                // user already is rather than at the top of a long list.
+                self.workspaces_sel = workspaces
+                    .iter()
+                    .position(|w| w.name == self.my_client())
+                    .unwrap_or(0);
+                self.workspaces = workspaces;
+            }
             Event::Notice(text) => {
                 self.notice = Some(text);
                 self.error = None;
@@ -1000,6 +1018,7 @@ impl App {
             Action::Resolve => self.show_unresolved(),
             Action::SelectRange => self.toggle_range(),
             Action::Streams => self.show_streams(),
+            Action::Workspaces => self.show_workspaces(),
             Action::Sync => {
                 self.busy = true;
                 self.error = None;
@@ -1186,6 +1205,7 @@ impl App {
             Modal::Blame => self.blame_key(key),
             Modal::Resolve => self.resolve_key(key),
             Modal::Streams => self.streams_key(key),
+            Modal::Workspaces => self.workspaces_key(key),
             _ => {}
         }
     }
@@ -1198,6 +1218,7 @@ impl App {
             Modal::Blame => Some(Action::Blame),
             Modal::Resolve => Some(Action::Resolve),
             Modal::Streams => Some(Action::Streams),
+            Modal::Workspaces => Some(Action::Workspaces),
             // The log closes on Esc, and steps back to the help sheet on `x`.
             Modal::Log | Modal::None => None,
         }
@@ -1291,6 +1312,62 @@ impl App {
             ],
             Request::SwitchStream { stream: stream.path },
         );
+    }
+
+    fn show_workspaces(&mut self) {
+        self.modal = Modal::Workspaces;
+        self.error = None;
+        self.busy = true;
+        // Somebody else's workspace holds nothing this user can act on, and a
+        // shared server has thousands of them.
+        let owner = match self.my_user() {
+            "" => None,
+            user => Some(user.to_owned()),
+        };
+        self.worker.send(Request::LoadWorkspaces { owner });
+    }
+
+    fn workspaces_key(&mut self, key: Key) {
+        if let Some(nav) = self.nav(key) {
+            self.workspaces_sel = step(self.workspaces_sel, self.workspaces.len(), nav);
+        } else if key.code == KeyCode::Enter {
+            self.switch_workspace();
+        }
+    }
+
+    /// Look at another workspace.
+    ///
+    /// Nothing on disk moves: this only points the connection at a different
+    /// client, so the changelists, files and streams all become that
+    /// workspace's. So there is nothing to confirm.
+    fn switch_workspace(&mut self) {
+        let Some(workspace) = self.workspaces.get(self.workspaces_sel).cloned() else {
+            return;
+        };
+        if workspace.name == self.my_client() {
+            self.error = Some("already on that workspace".into());
+            return;
+        }
+
+        self.modal = Modal::None;
+        self.error = None;
+        self.busy = true;
+        // Everything below is about the workspace being left behind.
+        self.files.clear();
+        self.loose_files.clear();
+        self.scanned.clear();
+        self.files_for = None;
+        self.file_sel = 0;
+        self.history_open = None;
+        self.diffs.clear();
+        self.diffs_for = None;
+        self.streams.clear();
+        self.select_anchor = None;
+        self.diff_source = Panel::Files;
+        self.worker.send(Request::SwitchWorkspace {
+            client: workspace.name,
+            root: workspace.root,
+        });
     }
 
     /// Show what is waiting to be resolved.

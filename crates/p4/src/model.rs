@@ -248,6 +248,22 @@ pub struct Stream {
     pub owner: String,
 }
 
+/// A client workspace, from `p4 clients`.
+#[derive(Debug, Clone)]
+pub struct Workspace {
+    pub name: String,
+    pub owner: String,
+    /// Where the workspace lives on disk.
+    pub root: String,
+    /// The host it is locked to. Empty when it can be used from anywhere.
+    pub host: String,
+    /// `None` for a classic client, which has a view of its own instead.
+    pub stream: Option<String>,
+    pub description: String,
+    /// Seconds since the epoch of the last use, as the server reports it.
+    pub accessed: Option<i64>,
+}
+
 /// A file that cannot be submitted until it is resolved, from `p4 resolve -n`.
 #[derive(Debug, Clone)]
 pub struct Unresolved {

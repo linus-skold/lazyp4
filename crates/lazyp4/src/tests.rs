@@ -1037,6 +1037,92 @@ fn switching_to_the_stream_already_on_is_refused() {
     assert!(app.error.as_deref().is_some_and(|e| e.contains("already on")));
 }
 
+fn workspace(name: &str, stream: Option<&str>) -> p4::Workspace {
+    p4::Workspace {
+        name: name.into(),
+        owner: "linsko".into(),
+        root: format!("E:\\{name}"),
+        host: String::new(),
+        stream: stream.map(str::to_owned),
+        description: "Created by linsko.".into(),
+        accessed: None,
+    }
+}
+
+#[test]
+fn w_lists_this_users_workspaces_and_marks_the_current_one() {
+    let mut app = app();
+    app.last_request();
+    press(&mut app, KeyCode::Char('w'));
+
+    assert_eq!(app.modal, Modal::Workspaces);
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::LoadWorkspaces { owner }) if owner.as_deref() == Some("linsko")
+    ));
+
+    app.handle(Event::Workspaces(vec![
+        workspace("linus-laptop", Some("//depot/dev")),
+        workspace(MINE, Some("//depot/main")),
+    ]));
+    app.handle(Event::Idle);
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("linus-laptop"), "{out}");
+    assert!(out.contains("//depot/dev"), "{out}");
+    assert!(out.contains(&format!("▸ {MINE}")), "{out}");
+}
+
+#[test]
+fn the_workspace_list_opens_on_the_one_being_looked_at() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('w'));
+    app.handle(Event::Workspaces(vec![
+        workspace("linus-laptop", Some("//depot/dev")),
+        workspace(MINE, Some("//depot/main")),
+    ]));
+
+    assert_eq!(app.workspaces_sel, 1, "the cursor starts where the user is");
+}
+
+#[test]
+fn enter_switches_workspace_and_drops_what_the_last_one_held() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('w'));
+    app.handle(Event::Workspaces(vec![
+        workspace(MINE, Some("//depot/main")),
+        workspace("linus-laptop", Some("//depot/dev")),
+    ]));
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('j')); // onto the laptop
+    press(&mut app, KeyCode::Enter);
+
+    // Nothing on disk moves, so there is nothing to confirm.
+    assert!(app.confirm.is_none());
+    assert_eq!(app.modal, Modal::None);
+    let Some(Request::SwitchWorkspace { client, root }) = app.last_request() else {
+        panic!("expected a switch");
+    };
+    assert_eq!(client, "linus-laptop");
+    assert_eq!(root, "E:\\linus-laptop");
+    assert!(app.files.is_empty(), "the old workspace's files are gone");
+    assert!(app.files_for.is_none());
+}
+
+#[test]
+fn switching_to_the_workspace_already_on_is_refused() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('w'));
+    app.handle(Event::Workspaces(vec![workspace(MINE, Some("//depot/main"))]));
+    app.last_request();
+
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.modal, Modal::Workspaces);
+    assert!(app.last_request().is_none());
+    assert!(app.error.as_deref().is_some_and(|e| e.contains("already on")));
+}
+
 #[test]
 fn v_selects_a_range_that_every_verb_then_acts_on() {
     let mut app = nested();

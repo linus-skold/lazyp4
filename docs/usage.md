@@ -190,6 +190,30 @@ out; a client with no stream gets the full list. `Enter`
 switches, after a confirmation: the workspace is resynced to match, which can
 move a lot of data, and Perforce refuses outright while any file is open.
 
+## Switching workspace
+
+lazyp4 shows one workspace at a time: the changelists, the files and the
+streams all belong to it. It starts on the workspace `P4CLIENT` names, which is
+the one you are standing in.
+
+`w` lists your workspaces, most recently used first, with the one you are
+looking at marked:
+
+```text
+┌ Workspaces ────────────────────────────────────┐
+│ ▸ linus-desktop               //depot/main     │
+│   linus-laptop                //depot/dev      │
+└ Enter switch   w close ───────────────────────-┘
+```
+
+`Enter` switches. Nothing on disk moves and nothing is synced: lazyp4 only
+points at a different workspace, so this is a safe way to look at what is
+pending somewhere else. The workspace root becomes the working directory, so
+commands that name local files still find them.
+
+Only your own workspaces are listed. Somebody else's holds nothing you can act
+on, and a shared server has thousands of them.
+
 ## Resolving
 
 A file that changed in the depot while you had it open cannot be submitted

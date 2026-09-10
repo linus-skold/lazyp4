@@ -440,6 +440,7 @@ pub enum Action {
     Fullscreen,
     Sync,
     Streams,
+    Workspaces,
     Resolve,
     Refresh,
     Log,
@@ -449,7 +450,7 @@ pub enum Action {
 
 /// What each action answers to before the config file has its say. A `const`
 /// so the slices live for the whole program rather than being rebuilt.
-const DEFAULT_KEYS: [(Action, &[Key]); 40] = [
+const DEFAULT_KEYS: [(Action, &[Key]); 41] = [
     (Action::Down, &[Key::ch('j'), Key::plain(KeyCode::Down)]),
     (Action::Up, &[Key::ch('k'), Key::plain(KeyCode::Up)]),
     (Action::First, &[Key::ch('g'), Key::plain(KeyCode::Home)]),
@@ -485,6 +486,7 @@ const DEFAULT_KEYS: [(Action, &[Key]); 40] = [
     (Action::Fullscreen, &[Key::plain(KeyCode::Enter)]),
     (Action::Sync, &[Key::ch('p')]),
     (Action::Streams, &[Key::ch('b')]),
+    (Action::Workspaces, &[Key::ch('w')]),
     (Action::Resolve, &[Key::ch('R')]),
     (Action::Refresh, &[Key::ch('r')]),
     (Action::Log, &[Key::ch('x')]),
@@ -493,7 +495,7 @@ const DEFAULT_KEYS: [(Action, &[Key]); 40] = [
 ];
 
 impl Action {
-    pub const ALL: [Action; 40] = [
+    pub const ALL: [Action; 41] = [
         Action::Down,
         Action::Up,
         Action::First,
@@ -529,6 +531,7 @@ impl Action {
         Action::Fullscreen,
         Action::Sync,
         Action::Streams,
+        Action::Workspaces,
         Action::Resolve,
         Action::Refresh,
         Action::Log,
@@ -574,6 +577,7 @@ impl Action {
             Action::Fullscreen => "fullscreen",
             Action::Sync => "sync",
             Action::Streams => "streams",
+            Action::Workspaces => "workspaces",
             Action::Resolve => "resolve",
             Action::Refresh => "refresh",
             Action::Log => "log",
@@ -634,6 +638,7 @@ impl Action {
             Action::Fullscreen
             | Action::Sync
             | Action::Streams
+            | Action::Workspaces
             | Action::Resolve
             | Action::Refresh
             | Action::Log
@@ -674,6 +679,7 @@ impl Action {
             Action::Fullscreen => row("open a changelist, or fullscreen the diff", None),
             Action::Sync => row("sync the workspace", None),
             Action::Streams => row("streams", None),
+            Action::Workspaces => row("switch workspace", None),
             Action::Resolve => row("resolve what is conflicting", None),
             Action::Refresh => row("refresh", None),
             Action::Log => row("the p4 command log", None),

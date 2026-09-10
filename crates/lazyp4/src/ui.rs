@@ -66,6 +66,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::Blame => draw_blame(frame, app),
         Modal::Resolve => draw_resolve(frame, app),
         Modal::Streams => draw_streams(frame, app),
+        Modal::Workspaces => draw_workspaces(frame, app),
     }
 
     // Drawn last so they sit above any overlay.
@@ -78,6 +79,73 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(confirm) = &app.confirm {
         draw_confirm(frame, t, confirm);
     }
+}
+
+fn draw_workspaces(frame: &mut Frame, app: &App) {
+    let t = &app.config.theme;
+    let current = app.my_client();
+    let items: Vec<ListItem> = app
+        .workspaces
+        .iter()
+        .map(|w| {
+            let here = w.name == current;
+            // The stream says what the workspace is for; a classic client has
+            // none, so its root is the only thing that tells it apart.
+            let about = match &w.stream {
+                Some(stream) => stream.clone(),
+                None => w.root.clone(),
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    if here { " ▸ " } else { "   " }.to_owned(),
+                    Style::default().fg(t.ok),
+                ),
+                Span::styled(
+                    format!("{:<28.28} ", w.name),
+                    if here {
+                        Style::default().fg(t.ok).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    },
+                ),
+                Span::styled(about, Style::default().fg(t.idle)),
+            ]))
+        })
+        .collect();
+
+    let area = frame.area();
+    let width = area.width.saturating_sub(8).min(80);
+    let height = (items.len().max(1) as u16 + 3).min(area.height.saturating_sub(2));
+    let area = centered(area, width, height);
+
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(t.focus))
+        .title(Span::styled(
+            " Workspaces ",
+            Style::default().fg(t.focus).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            format!(" Enter switch   {} close ", key_of(app, Action::Workspaces)),
+            Style::default().fg(t.idle),
+        ));
+
+    if app.workspaces.is_empty() {
+        frame.render_widget(
+            Paragraph::new(if app.busy { "  loading…" } else { "  no workspaces" })
+                .style(Style::default().fg(t.idle))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let mut state = ListState::default().with_selected(Some(app.workspaces_sel));
+    frame.render_stateful_widget(
+        List::new(items).block(block).highlight_style(selection_style(t, true)),
+        area,
+        &mut state,
+    );
 }
 
 fn draw_streams(frame: &mut Frame, app: &App) {

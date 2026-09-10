@@ -348,6 +348,35 @@ impl Client {
             .collect())
     }
 
+    /// The workspaces on the server. `owner` narrows to one user's.
+    ///
+    /// Sorted by last use, newest first, so the ones worth switching to are at
+    /// the top of a list that can run to thousands on a shared server.
+    pub fn clients(&mut self, owner: Option<&str>) -> Result<Vec<Workspace>> {
+        let mut args: Vec<&str> = Vec::new();
+        if let Some(u) = owner {
+            args.extend(["-u", u]);
+        }
+        let out = self.run("clients", &args)?;
+        let mut workspaces: Vec<Workspace> = out
+            .records
+            .iter()
+            .filter_map(|rec| {
+                Some(Workspace {
+                    name: rec.field("client")?.to_owned(),
+                    owner: rec.field("Owner").unwrap_or_default().to_owned(),
+                    root: rec.field("Root").unwrap_or_default().to_owned(),
+                    host: rec.field("Host").unwrap_or_default().to_owned(),
+                    stream: rec.field("Stream").map(str::to_owned),
+                    description: rec.field("Description").unwrap_or_default().trim().to_owned(),
+                    accessed: rec.parsed("Access"),
+                })
+            })
+            .collect();
+        workspaces.sort_by_key(|w| std::cmp::Reverse(w.accessed));
+        Ok(workspaces)
+    }
+
     /// Point the workspace at another stream and resync it.
     ///
     /// Refused by the server while files are open, which is what stops this

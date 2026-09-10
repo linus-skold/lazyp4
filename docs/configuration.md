@@ -52,7 +52,7 @@ Every command routes through a named action, so any of them can move.
 | Moving around | `down` `up` `first` `last` `page_down` `page_up` `left` `right` `next_panel` `prev_panel` `next_tab` `prev_tab` `filter` `zoom_in` `zoom_out` `cancel` |
 | Files | `move` `revert` `shelve_files` `select_range` `history` `blame` `ignore` `scan` |
 | Changelists | `new_change` `describe` `submit` `delete_change` `shelve` `unshelve` `delete_shelf` `undo` |
-| Everywhere | `fullscreen` `sync` `streams` `resolve` `refresh` `log` `help` `quit` |
+| Everywhere | `fullscreen` `sync` `streams` `workspaces` `resolve` `refresh` `log` `help` `quit` |
 
 A key is a single character, or one of `space` `enter` `tab` `shift-tab` `esc`
 `backspace` `up` `down` `left` `right` `home` `end` `pageup` `pagedown`, with an
