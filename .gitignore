@@ -2,3 +2,7 @@
 **/*.rs.bk
 # Where CI parks the P4API download; locally it goes to the user cache dir.
 /.p4api
+# nix build symlinks, and where direnv keeps the loaded shell.
+/result
+/result-*
+/.direnv
