@@ -226,7 +226,7 @@ Affected files ...
 
 Differences ...
 
-==== //darksim/main/.p4ignore#7 (text) ====
+==== //depot/main/.p4ignore#7 (text) ====
 
 @@ -41,6 +41,10 @@
  Intermediate/
@@ -243,8 +243,8 @@ Differences ...
 
     /// Captured from `diff -du <file>`, info and text already interleaved.
     const WORKSPACE: &str = "\
---- //darksim/main/Source/Darksim/Darksim.Build.cs\t2026-03-24 19:30:23.000000000 0000
-+++ E:\\darksim_perforce\\linsko_darksim\\Source\\Darksim\\Darksim.Build.cs\t2026-03-24 19:30:23.000000000 0000
+--- //depot/main/Source/Core/Core.Build.cs\t2026-03-24 19:30:23.000000000 0000
++++ E:\\ws\\Source\\Core\\Core.Build.cs\t2026-03-24 19:30:23.000000000 0000
 @@ -1,5 +1,6 @@
  // Fill out your copyright notice.
 
@@ -257,7 +257,7 @@ Differences ...
     fn reads_a_describe_banner() {
         let files = normalize(DESCRIBE);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].depot_path, "//darksim/main/.p4ignore");
+        assert_eq!(files[0].depot_path, "//depot/main/.p4ignore");
         assert_eq!(files[0].rev, Some(7));
         assert!(files[0].hunks.starts_with("@@ -41,6 +41,10 @@"));
         // The describe preamble must not leak into the hunks.
@@ -271,7 +271,7 @@ Differences ...
         // The `+++` side is a local path; the depot path is the identity.
         assert_eq!(
             files[0].depot_path,
-            "//darksim/main/Source/Darksim/Darksim.Build.cs"
+            "//depot/main/Source/Core/Core.Build.cs"
         );
         assert!(files[0].hunks.contains("+using System.IO;"));
     }
@@ -315,9 +315,9 @@ Differences ...
     fn renders_a_patch_a_viewer_can_read() {
         let patch = to_unified(&normalize(DESCRIBE));
         assert!(patch.starts_with(
-            "diff --git a/darksim/main/.p4ignore b/darksim/main/.p4ignore\n\
-             --- a/darksim/main/.p4ignore\n\
-             +++ b/darksim/main/.p4ignore\n\
+            "diff --git a/depot/main/.p4ignore b/depot/main/.p4ignore\n\
+             --- a/depot/main/.p4ignore\n\
+             +++ b/depot/main/.p4ignore\n\
              @@ -41,6 +41,10 @@"
         ), "{patch}");
     }

@@ -34,7 +34,7 @@ fn app_with(config: Config) -> App {
         server_version: "P4D/LINUX/2024.2".into(),
         // Pinned so the tree root does not shift with the files under test:
         // without a stream it is whatever directory they happen to share.
-        stream: Some("//darksim/main".into()),
+        stream: Some("//depot/main".into()),
     }));
     app.handle(Event::Changes {
         pending: vec![
@@ -62,11 +62,11 @@ fn app_with(config: Config) -> App {
     app.handle(Event::Files {
         change: ChangeId::Number(395),
         files: vec![
-            file("//darksim/main/AGENTS.md", FileAction::Add, false),
-            file("//darksim/main/Foo.cpp", FileAction::Edit, true),
+            file("//depot/main/AGENTS.md", FileAction::Add, false),
+            file("//depot/main/Foo.cpp", FileAction::Edit, true),
         ],
         default_files: vec![file(
-            "//darksim/main/Config/DefaultEngine.ini",
+            "//depot/main/Config/DefaultEngine.ini",
             FileAction::Edit,
             false,
         )],
@@ -74,7 +74,7 @@ fn app_with(config: Config) -> App {
     app.handle(Event::Diff {
         change: ChangeId::Number(395),
         files: vec![FileDiff {
-            depot_path: "//darksim/main/Foo.cpp".into(),
+            depot_path: "//depot/main/Foo.cpp".into(),
             rev: Some(3),
             hunks: "@@ -1,3 +1,3 @@\n context\n-gone\n+added\n".into(),
         }],
@@ -137,7 +137,7 @@ fn file(path: &str, action: FileAction, unresolved: bool) -> FileEntry {
 fn unopened(path: &str, action: FileAction) -> FileEntry {
     FileEntry {
         depot_path: path.into(),
-        local_path: Some(format!("E:\\ws{}", path.trim_start_matches("//darksim/main"))),
+        local_path: Some(format!("E:\\ws{}", path.trim_start_matches("//depot/main"))),
         rev: None,
         action,
         unresolved: false,
@@ -406,7 +406,7 @@ fn the_diff_pane_follows_the_selected_file() {
 
     assert_eq!(
         app.selected_diff().unwrap().depot_path,
-        "//darksim/main/Foo.cpp"
+        "//depot/main/Foo.cpp"
     );
     let out = render(&app, 120, 40);
     assert!(out.contains("@@ -1,3 +1,3 @@"), "{out}");
@@ -440,7 +440,7 @@ fn the_cursor_walks_from_one_group_into_the_next() {
     press(&mut app, KeyCode::Char('j'));
     assert_eq!(
         app.selected_file().unwrap().depot_path,
-        "//darksim/main/Config/DefaultEngine.ini"
+        "//depot/main/Config/DefaultEngine.ini"
     );
 }
 
@@ -448,10 +448,10 @@ fn the_cursor_walks_from_one_group_into_the_next() {
 fn nested() -> App {
     let mut app = app();
     app.files = vec![
-        file("//darksim/main/Source/Darksim/Actors/Door.cpp", FileAction::Edit, false),
-        file("//darksim/main/Source/Darksim/Actors/Door.h", FileAction::Edit, false),
-        file("//darksim/main/Source/Editor/Tool.cpp", FileAction::Add, false),
-        file("//darksim/main/README.md", FileAction::Edit, false),
+        file("//depot/main/Source/Core/Actors/Door.cpp", FileAction::Edit, false),
+        file("//depot/main/Source/Core/Actors/Door.h", FileAction::Edit, false),
+        file("//depot/main/Source/Editor/Tool.cpp", FileAction::Add, false),
+        file("//depot/main/README.md", FileAction::Edit, false),
     ];
     app.loose_files.clear();
     app.file_sel = 0;
@@ -463,15 +463,15 @@ fn files_are_shown_as_a_tree_below_the_depot_root() {
     let out = render(&nested(), 120, 40);
     // Each directory is its own row and the shared depot prefix is gone.
     assert!(out.contains("Source/"), "{out}");
-    assert!(out.contains("Darksim/"), "{out}");
+    assert!(out.contains("Core/"), "{out}");
     assert!(out.contains("Actors/"), "{out}");
     assert!(out.contains("Door.cpp"), "{out}");
     assert!(
-        !out.contains("Darksim/Actors/"),
+        !out.contains("Core/Actors/"),
         "directories are not stacked onto one row\n{out}"
     );
     assert!(
-        !out.contains("//darksim/main/Source"),
+        !out.contains("//depot/main/Source"),
         "the root prefix should not be repeated on every row\n{out}"
     );
 }
@@ -497,8 +497,8 @@ fn folding_a_directory_leaves_the_same_name_in_the_other_group_alone() {
     // The two groups are separate trees; a directory can hold different files
     // in each, so their fold state is separate too.
     let mut app = app();
-    app.files = vec![file("//darksim/main/Config/A.ini", FileAction::Edit, false)];
-    app.loose_files = vec![file("//darksim/main/Config/B.ini", FileAction::Edit, false)];
+    app.files = vec![file("//depot/main/Config/A.ini", FileAction::Edit, false)];
+    app.loose_files = vec![file("//depot/main/Config/B.ini", FileAction::Edit, false)];
     app.file_sel = 0;
     app.focus = Panel::Files;
 
@@ -516,8 +516,8 @@ fn folding_a_directory_leaves_the_same_name_in_the_other_group_alone() {
 #[test]
 fn each_group_remembers_its_own_folds() {
     let mut app = app();
-    app.files = vec![file("//darksim/main/Config/A.ini", FileAction::Edit, false)];
-    app.loose_files = vec![file("//darksim/main/Config/B.ini", FileAction::Edit, false)];
+    app.files = vec![file("//depot/main/Config/A.ini", FileAction::Edit, false)];
+    app.loose_files = vec![file("//depot/main/Config/B.ini", FileAction::Edit, false)];
     app.file_sel = 0;
     app.focus = Panel::Files;
 
@@ -558,7 +558,7 @@ fn space_on_a_directory_moves_everything_under_it() {
     app.focus = Panel::Files;
     app.last_request();
 
-    // Source/ then Darksim/ then Actors/, each on its own row.
+    // Source/ then Core/ then Actors/, each on its own row.
     press(&mut app, KeyCode::Char('j'));
     press(&mut app, KeyCode::Char('j'));
     let Some(FileRow::Dir { label, .. }) = app.selected_row() else {
@@ -575,8 +575,8 @@ fn space_on_a_directory_moves_everything_under_it() {
     assert_eq!(
         moved,
         [
-            "//darksim/main/Source/Darksim/Actors/Door.cpp",
-            "//darksim/main/Source/Darksim/Actors/Door.h"
+            "//depot/main/Source/Core/Actors/Door.cpp",
+            "//depot/main/Source/Core/Actors/Door.h"
         ],
         "only the files under that directory, not its siblings"
     );
@@ -589,10 +589,10 @@ fn the_stream_is_the_tree_root_when_the_server_reports_one() {
         user: "linsko".into(),
         client: MINE.into(),
         client_known: true,
-        stream: Some("//darksim/main".into()),
+        stream: Some("//depot/main".into()),
         ..Default::default()
     }));
-    assert_eq!(app.depot_root(), "//darksim/main");
+    assert_eq!(app.depot_root(), "//depot/main");
     assert!(render(&app, 120, 40).contains("README.md"));
 }
 
@@ -606,7 +606,7 @@ fn space_sends_a_changelist_file_back_to_default() {
         panic!("expected a move");
     };
     assert_eq!(change, ChangeId::Default);
-    assert_eq!(files[0].depot_path, "//darksim/main/AGENTS.md");
+    assert_eq!(files[0].depot_path, "//depot/main/AGENTS.md");
 }
 
 #[test]
@@ -622,7 +622,7 @@ fn space_pulls_a_default_file_into_the_selected_changelist() {
         panic!("expected a move");
     };
     assert_eq!(change, ChangeId::Number(395));
-    assert_eq!(files[0].depot_path, "//darksim/main/Config/DefaultEngine.ini");
+    assert_eq!(files[0].depot_path, "//depot/main/Config/DefaultEngine.ini");
 }
 
 /// Sitting on the default changelist, where a move has no implied destination.
@@ -632,7 +632,7 @@ fn on_default() -> App {
     press(&mut app, KeyCode::Char('g'));
     app.handle(Event::Files {
         change: ChangeId::Default,
-        files: vec![file("//darksim/main/Loose.cpp", FileAction::Edit, false)],
+        files: vec![file("//depot/main/Loose.cpp", FileAction::Edit, false)],
         default_files: Vec::new(),
     });
     app.focus = Panel::Files;
@@ -693,7 +693,7 @@ fn choosing_an_existing_changelist_moves_the_files() {
         panic!("expected a move");
     };
     assert_eq!(change, ChangeId::Number(308));
-    assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
+    assert_eq!(files[0].depot_path, "//depot/main/Loose.cpp");
 }
 
 #[test]
@@ -722,14 +722,14 @@ fn choosing_new_asks_for_a_description_before_creating_anything() {
     let PostCreate::Move(files) = then else {
         panic!("the new changelist should take the files");
     };
-    assert_eq!(files[0].depot_path, "//darksim/main/Loose.cpp");
+    assert_eq!(files[0].depot_path, "//depot/main/Loose.cpp");
 }
 
 fn stream(path: &str, kind: &str) -> p4::Stream {
     p4::Stream {
         path: path.into(),
         name: path.rsplit('/').next().unwrap_or_default().into(),
-        parent: "//darksim/main".into(),
+        parent: "//depot/main".into(),
         kind: kind.into(),
         owner: "linsko".into(),
     }
@@ -837,23 +837,23 @@ fn b_lists_the_streams_and_marks_the_current_one() {
     press(&mut app, KeyCode::Char('b'));
 
     assert_eq!(app.modal, Modal::Streams);
-    // The fixture is on //darksim/main, so only that depot is listed.
+    // The fixture is on //depot/main, so only that depot is listed.
     assert!(matches!(
         app.last_request(),
-        Some(Request::LoadStreams { depot }) if depot.as_deref() == Some("//darksim/...")
+        Some(Request::LoadStreams { depot }) if depot.as_deref() == Some("//depot/...")
     ));
 
     app.handle(Event::Streams(vec![
-        stream("//darksim/main", "mainline"),
-        stream("//darksim/dev", "virtual"),
+        stream("//depot/main", "mainline"),
+        stream("//depot/dev", "virtual"),
     ]));
     app.handle(Event::Idle);
 
     let out = render(&app, 120, 40);
-    assert!(out.contains("//darksim/dev"), "{out}");
+    assert!(out.contains("//depot/dev"), "{out}");
     assert!(out.contains("mainline"), "{out}");
     // The fixture's workspace is on main, so that row is marked.
-    assert!(out.contains("▸ //darksim/main"), "{out}");
+    assert!(out.contains("▸ //depot/main"), "{out}");
 }
 
 #[test]
@@ -861,8 +861,8 @@ fn switching_stream_is_confirmed_and_warns_about_the_resync() {
     let mut app = app();
     press(&mut app, KeyCode::Char('b'));
     app.handle(Event::Streams(vec![
-        stream("//darksim/main", "mainline"),
-        stream("//darksim/dev", "virtual"),
+        stream("//depot/main", "mainline"),
+        stream("//depot/dev", "virtual"),
     ]));
     app.last_request();
 
@@ -870,21 +870,21 @@ fn switching_stream_is_confirmed_and_warns_about_the_resync() {
     press(&mut app, KeyCode::Enter);
 
     let confirm = app.confirm.as_ref().expect("switching needs confirming");
-    assert_eq!(confirm.title, "Switch to //darksim/dev?");
+    assert_eq!(confirm.title, "Switch to //depot/dev?");
     assert!(confirm.lines.iter().any(|l| l.contains("resynced")));
 
     press(&mut app, KeyCode::Char('y'));
     let Some(Request::SwitchStream { stream }) = app.last_request() else {
         panic!("expected a switch");
     };
-    assert_eq!(stream, "//darksim/dev");
+    assert_eq!(stream, "//depot/dev");
 }
 
 #[test]
 fn switching_to_the_stream_already_on_is_refused() {
     let mut app = app();
     press(&mut app, KeyCode::Char('b'));
-    app.handle(Event::Streams(vec![stream("//darksim/main", "mainline")]));
+    app.handle(Event::Streams(vec![stream("//depot/main", "mainline")]));
     app.last_request();
 
     press(&mut app, KeyCode::Enter);
@@ -897,7 +897,7 @@ fn switching_to_the_stream_already_on_is_refused() {
 fn v_selects_a_range_that_every_verb_then_acts_on() {
     let mut app = nested();
     app.focus = Panel::Files;
-    // Onto Door.cpp: Source/, Darksim/, Actors/, then the files.
+    // Onto Door.cpp: Source/, Core/, Actors/, then the files.
     for _ in 0..3 {
         press(&mut app, KeyCode::Char('j'));
     }
@@ -948,9 +948,9 @@ fn a_range_covering_a_directory_takes_its_contents_once() {
     assert_eq!(
         paths,
         [
-            "//darksim/main/Source/Darksim/Actors/Door.cpp",
-            "//darksim/main/Source/Darksim/Actors/Door.h",
-            "//darksim/main/Source/Editor/Tool.cpp",
+            "//depot/main/Source/Core/Actors/Door.cpp",
+            "//depot/main/Source/Core/Actors/Door.h",
+            "//depot/main/Source/Editor/Tool.cpp",
         ],
         "a directory and its own files in one range must not double up"
     );
@@ -1009,7 +1009,7 @@ fn a_range_only_makes_sense_in_the_files_panel() {
 
 fn unresolved(path: &str) -> p4::Unresolved {
     p4::Unresolved {
-        local_path: format!("E:\\ws{}", path.trim_start_matches("//darksim/main")),
+        local_path: format!("E:\\ws{}", path.trim_start_matches("//depot/main")),
         from_path: path.into(),
         start_rev: Some(10),
         end_rev: Some(12),
@@ -1023,7 +1023,7 @@ fn resolving() -> App {
     let mut app = app();
     press(&mut app, KeyCode::Char('R'));
     app.handle(Event::Unresolved(vec![unresolved(
-        "//darksim/main/Config/DefaultEngine.ini",
+        "//depot/main/Config/DefaultEngine.ini",
     )]));
     app.last_request();
     app
@@ -1039,7 +1039,7 @@ fn shift_r_lists_what_needs_resolving() {
     assert!(matches!(app.last_request(), Some(Request::LoadUnresolved)));
 
     app.handle(Event::Unresolved(vec![unresolved(
-        "//darksim/main/Config/DefaultEngine.ini",
+        "//depot/main/Config/DefaultEngine.ini",
     )]));
     app.handle(Event::Idle);
 
@@ -1308,7 +1308,7 @@ fn s_in_files_shelves_only_the_selection() {
     };
     assert_eq!(change, ChangeId::Number(395));
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].depot_path, "//darksim/main/AGENTS.md");
+    assert_eq!(files[0].depot_path, "//depot/main/AGENTS.md");
 }
 
 #[test]
@@ -1429,7 +1429,7 @@ fn shift_u_undoes_a_submitted_change_into_a_new_changelist() {
     let Some(Request::Undo { spec, description }) = app.last_request() else {
         panic!("expected an undo");
     };
-    assert_eq!(spec, "//darksim/main/...@=396");
+    assert_eq!(spec, "//depot/main/...@=396");
     assert_eq!(description, "Undo of change 396");
 }
 
@@ -1439,7 +1439,7 @@ fn shift_u_in_the_history_view_undoes_one_revision() {
     app.focus = Panel::Files;
     press(&mut app, KeyCode::Char('H'));
     app.handle(Event::History {
-        depot_path: "//darksim/main/AGENTS.md".into(),
+        depot_path: "//depot/main/AGENTS.md".into(),
         revisions: vec![revision(7, 396, "# Updated .p4ignore"), revision(6, 390, "earlier")],
     });
     app.last_request();
@@ -1453,8 +1453,8 @@ fn shift_u_in_the_history_view_undoes_one_revision() {
     let Some(Request::Undo { spec, description }) = app.last_request() else {
         panic!("expected an undo");
     };
-    assert_eq!(spec, "//darksim/main/AGENTS.md#7");
-    assert_eq!(description, "Undo of //darksim/main/AGENTS.md#7");
+    assert_eq!(spec, "//depot/main/AGENTS.md#7");
+    assert_eq!(description, "Undo of //depot/main/AGENTS.md#7");
 }
 
 #[test]
@@ -1463,7 +1463,7 @@ fn the_history_view_undoes_the_revision_under_the_cursor() {
     app.focus = Panel::Files;
     press(&mut app, KeyCode::Char('H'));
     app.handle(Event::History {
-        depot_path: "//darksim/main/AGENTS.md".into(),
+        depot_path: "//depot/main/AGENTS.md".into(),
         revisions: vec![revision(7, 396, "newest"), revision(6, 390, "earlier")],
     });
 
@@ -1474,7 +1474,7 @@ fn the_history_view_undoes_the_revision_under_the_cursor() {
     let Some(Request::Undo { spec, .. }) = app.last_request() else {
         panic!("expected an undo");
     };
-    assert_eq!(spec, "//darksim/main/AGENTS.md#6");
+    assert_eq!(spec, "//depot/main/AGENTS.md#6");
 }
 
 #[test]
@@ -1483,7 +1483,7 @@ fn the_first_revision_of_a_file_cannot_be_undone() {
     app.focus = Panel::Files;
     press(&mut app, KeyCode::Char('H'));
     app.handle(Event::History {
-        depot_path: "//darksim/main/AGENTS.md".into(),
+        depot_path: "//depot/main/AGENTS.md".into(),
         revisions: vec![revision(1, 300, "added")],
     });
     app.last_request();
@@ -1524,7 +1524,7 @@ fn shift_h_shows_the_history_of_the_selected_file() {
     let Some(Request::LoadHistory { depot_path }) = app.last_request() else {
         panic!("expected a filelog");
     };
-    assert_eq!(depot_path, "//darksim/main/AGENTS.md");
+    assert_eq!(depot_path, "//depot/main/AGENTS.md");
 
     app.handle(Event::History {
         depot_path,
@@ -1532,7 +1532,7 @@ fn shift_h_shows_the_history_of_the_selected_file() {
     });
 
     let out = render(&app, 120, 40);
-    assert!(out.contains("History of darksim/main/AGENTS.md"), "{out}");
+    assert!(out.contains("History of depot/main/AGENTS.md"), "{out}");
     assert!(out.contains("#7"), "{out}");
     assert!(out.contains("396"), "{out}");
     assert!(out.contains("2026-09-08"), "the date is shown\n{out}");
@@ -1546,7 +1546,7 @@ fn history_for_a_file_the_cursor_has_left_is_ignored() {
     press(&mut app, KeyCode::Char('H'));
 
     app.handle(Event::History {
-        depot_path: "//darksim/main/Somewhere/Else.cpp".into(),
+        depot_path: "//depot/main/Somewhere/Else.cpp".into(),
         revisions: vec![revision(1, 1, "stale")],
     });
 
@@ -1574,7 +1574,7 @@ fn a_blames_the_selected_file_line_by_line() {
     let Some(Request::LoadBlame { depot_path }) = app.last_request() else {
         panic!("expected an annotate");
     };
-    assert_eq!(depot_path, "//darksim/main/AGENTS.md");
+    assert_eq!(depot_path, "//depot/main/AGENTS.md");
 
     app.handle(Event::Blame {
         depot_path,
@@ -1586,7 +1586,7 @@ fn a_blames_the_selected_file_line_by_line() {
     app.handle(Event::Idle);
 
     let out = render(&app, 120, 40);
-    assert!(out.contains("Blame of darksim/main/AGENTS.md"), "{out}");
+    assert!(out.contains("Blame of depot/main/AGENTS.md"), "{out}");
     assert!(out.contains("390"), "{out}");
     assert!(out.contains("sarwag"), "{out}");
     assert!(out.contains("2026-09-08"), "the date is shown\n{out}");
@@ -1603,7 +1603,7 @@ fn a_run_of_lines_from_one_change_is_named_once() {
     app.focus = Panel::Files;
     press(&mut app, KeyCode::Char('a'));
     app.handle(Event::Blame {
-        depot_path: "//darksim/main/AGENTS.md".into(),
+        depot_path: "//depot/main/AGENTS.md".into(),
         lines: vec![
             blamed(396, "linsko", "first"),
             blamed(396, "linsko", "second"),
@@ -1623,7 +1623,7 @@ fn blame_for_a_file_the_cursor_has_left_is_ignored() {
     press(&mut app, KeyCode::Char('a'));
 
     app.handle(Event::Blame {
-        depot_path: "//darksim/main/Somewhere/Else.cpp".into(),
+        depot_path: "//depot/main/Somewhere/Else.cpp".into(),
         lines: vec![blamed(1, "nobody", "stale")],
     });
 
@@ -1634,7 +1634,7 @@ fn blame_for_a_file_the_cursor_has_left_is_ignored() {
 fn a_file_the_depot_has_never_seen_cannot_be_blamed() {
     let mut app = app();
     app.files.clear();
-    app.loose_files = vec![unopened("//darksim/main/New.cpp", FileAction::Add)];
+    app.loose_files = vec![unopened("//depot/main/New.cpp", FileAction::Add)];
     app.file_sel = 0;
     app.focus = Panel::Files;
     app.last_request();
@@ -1846,7 +1846,7 @@ fn d_in_files_reverts_after_confirming_and_naming_the_files() {
     let Some(Request::RevertFiles { files }) = app.last_request() else {
         panic!("expected a revert");
     };
-    assert_eq!(files[0].depot_path, "//darksim/main/AGENTS.md");
+    assert_eq!(files[0].depot_path, "//depot/main/AGENTS.md");
 }
 
 #[test]
@@ -1884,7 +1884,7 @@ fn the_revert_confirmation_lists_what_the_server_would_do() {
     app.handle(Event::RevertPreview {
         files: files.clone(),
         preview: vec![p4::RevertPreview {
-            depot_path: "//darksim/main/Foo.cpp".into(),
+            depot_path: "//depot/main/Foo.cpp".into(),
             action: FileAction::Edit,
         }],
     });
@@ -1928,7 +1928,7 @@ fn a_revert_the_server_would_do_nothing_about_says_so() {
 fn a_file_that_is_not_open_has_nothing_to_revert() {
     let mut app = app();
     app.files.clear();
-    app.loose_files = vec![unopened("//darksim/main/New.cpp", FileAction::Add)];
+    app.loose_files = vec![unopened("//depot/main/New.cpp", FileAction::Add)];
     app.file_sel = 0;
     app.focus = Panel::Files;
     app.last_request();
@@ -2069,7 +2069,7 @@ fn space_refuses_to_edit_a_submitted_changelist() {
     press(&mut app, KeyCode::Char('g'));
     app.handle(Event::Files {
         change: ChangeId::Number(396),
-        files: vec![file("//darksim/main/.p4ignore", FileAction::Edit, false)],
+        files: vec![file("//depot/main/.p4ignore", FileAction::Edit, false)],
         default_files: Vec::new(),
     });
 
@@ -2088,8 +2088,8 @@ fn space_refuses_to_edit_a_submitted_changelist() {
 fn scanned_files_join_the_default_group_and_untracked_ones_show_two_question_marks() {
     let mut app = app();
     app.handle(Event::Scanned(vec![
-        unopened("//darksim/main/NewThing.cpp", FileAction::Add),
-        unopened("//darksim/main/Changed.cpp", FileAction::Edit),
+        unopened("//depot/main/NewThing.cpp", FileAction::Add),
+        unopened("//depot/main/Changed.cpp", FileAction::Edit),
     ]));
 
     assert_eq!(app.all_files().len(), 5);
@@ -2104,7 +2104,7 @@ fn a_scanned_file_that_is_already_open_is_not_listed_twice() {
     // `p4 status` reports open files too; they are already in a group.
     let mut app = app();
     app.handle(Event::Scanned(vec![unopened(
-        "//darksim/main/AGENTS.md",
+        "//depot/main/AGENTS.md",
         FileAction::Add,
     )]));
 
@@ -2115,7 +2115,7 @@ fn a_scanned_file_that_is_already_open_is_not_listed_twice() {
 fn space_on_an_untracked_file_opens_it_for_add_by_local_path() {
     let mut app = app();
     app.handle(Event::Scanned(vec![unopened(
-        "//darksim/main/NewThing.cpp",
+        "//depot/main/NewThing.cpp",
         FileAction::Add,
     )]));
 
@@ -2137,7 +2137,7 @@ fn a_rebound_key_moves_the_command_off_the_old_one() {
     let mut app = app_with(Config::parse("[keys]\nsubmit = C\n"));
     app.handle(Event::Files {
         change: ChangeId::Number(395),
-        files: vec![file("//darksim/main/AGENTS.md", FileAction::Add, false)],
+        files: vec![file("//depot/main/AGENTS.md", FileAction::Add, false)],
         default_files: Vec::new(),
     });
     app.last_request();
@@ -2179,7 +2179,7 @@ fn the_diff_uses_the_configured_tab_width() {
     let drawn = |width: &str| {
         let mut app = app_with(Config::parse(&format!("[diff]\ntab_width = {width}\n")));
         app.diffs = vec![FileDiff {
-            depot_path: "//darksim/main/AGENTS.md".into(),
+            depot_path: "//depot/main/AGENTS.md".into(),
             rev: Some(3),
             hunks: "@@ -1,1 +1,1 @@\n \tindented\n".into(),
         }];
@@ -2216,7 +2216,7 @@ fn the_first_look_at_the_workspace_is_not_a_change() {
     app.poll_external();
     assert!(matches!(app.last_request(), Some(Request::CheckExternal)));
 
-    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    app.handle(Event::External("edit //depot/main/Foo.cpp".into()));
     assert!(app.notice.is_none());
     assert!(app.last_request().is_none(), "nothing to reload yet");
 }
@@ -2224,10 +2224,10 @@ fn the_first_look_at_the_workspace_is_not_a_change() {
 #[test]
 fn p4_used_in_another_window_reloads_and_says_so() {
     let mut app = app();
-    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    app.handle(Event::External("edit //depot/main/Foo.cpp".into()));
     app.last_request();
 
-    app.handle(Event::External("edit //darksim/main/Foo.cpp\nedit //darksim/main/Bar.cpp".into()));
+    app.handle(Event::External("edit //depot/main/Foo.cpp\nedit //depot/main/Bar.cpp".into()));
 
     assert!(matches!(app.last_request(), Some(Request::Refresh)));
     assert!(app
@@ -2239,10 +2239,10 @@ fn p4_used_in_another_window_reloads_and_says_so() {
 #[test]
 fn an_unchanged_workspace_is_left_alone() {
     let mut app = app();
-    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    app.handle(Event::External("edit //depot/main/Foo.cpp".into()));
     app.last_request();
 
-    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    app.handle(Event::External("edit //depot/main/Foo.cpp".into()));
 
     assert!(app.last_request().is_none());
     assert!(app.notice.is_none());
@@ -2251,12 +2251,12 @@ fn an_unchanged_workspace_is_left_alone() {
 #[test]
 fn our_own_write_is_not_reported_back_as_an_external_change() {
     let mut app = app();
-    app.handle(Event::External("edit //darksim/main/Foo.cpp".into()));
+    app.handle(Event::External("edit //depot/main/Foo.cpp".into()));
 
     // A move of our own; the next poll sees a workspace that has moved.
     app.handle(Event::Changed);
     app.last_request();
-    app.handle(Event::External("edit //darksim/main/Foo.cpp\nedit //darksim/main/Bar.cpp".into()));
+    app.handle(Event::External("edit //depot/main/Foo.cpp\nedit //depot/main/Bar.cpp".into()));
 
     assert!(app.notice.is_none(), "we did that ourselves");
     assert!(app.last_request().is_none());
@@ -2314,7 +2314,7 @@ fn an_ignore_pattern_is_the_path_below_the_workspace_root() {
 fn i_adds_an_untracked_file_to_the_ignore_file() {
     let mut app = app();
     app.files.clear();
-    app.loose_files = vec![unopened("//darksim/main/Big.uasset", FileAction::Add)];
+    app.loose_files = vec![unopened("//depot/main/Big.uasset", FileAction::Add)];
     app.file_sel = 0;
     app.focus = Panel::Files;
     app.last_request();
@@ -2334,14 +2334,14 @@ fn i_adds_an_untracked_file_to_the_ignore_file() {
     let name = std::env::var("P4IGNORE").unwrap_or_else(|_| ".p4ignore".to_owned());
     assert!(file.ends_with(&name), "{file}");
     assert_eq!(pattern, "Big.uasset");
-    assert_eq!(depot_path, "//darksim/main/Big.uasset");
+    assert_eq!(depot_path, "//depot/main/Big.uasset");
 }
 
 #[test]
 fn an_ignored_file_leaves_the_list_and_the_bar_says_where_it_went() {
     let mut app = app();
     app.handle(Event::Scanned(vec![unopened(
-        "//darksim/main/Big.uasset",
+        "//depot/main/Big.uasset",
         FileAction::Add,
     )]));
     assert!(app
@@ -2350,7 +2350,7 @@ fn an_ignored_file_leaves_the_list_and_the_bar_says_where_it_went() {
         .any(|f| f.depot_path.ends_with("Big.uasset")));
 
     app.handle(Event::Ignored {
-        depot_path: "//darksim/main/Big.uasset".into(),
+        depot_path: "//depot/main/Big.uasset".into(),
         pattern: "Big.uasset".into(),
         file: "E:/ws/.p4ignore".into(),
     });
@@ -2568,7 +2568,7 @@ fn the_diff_shows_line_numbers_and_marks_the_changed_words() {
     let mut app = app();
     // Set directly: an Event::Diff here would be discarded as a stale answer.
     app.diffs = vec![FileDiff {
-        depot_path: "//darksim/main/AGENTS.md".into(),
+        depot_path: "//depot/main/AGENTS.md".into(),
         rev: Some(3),
         hunks: "@@ -10,2 +10,2 @@\n keep\n-let x = f(a, b);\n+let x = f(a, c);\n".into(),
     }];
@@ -2727,14 +2727,14 @@ fn preview() {
     press(&mut submitting, KeyCode::Char('c'));
     println!("{}\n", render(&submitting, 92, 12));
 
-    // Real tab-indented content, as captured from Darksim.Build.cs.
+    // Real tab-indented content, as captured from Core.Build.cs.
     let mut tabs = app();
     tabs.diffs = vec![FileDiff {
-        depot_path: "//darksim/main/AGENTS.md".into(),
+        depot_path: "//depot/main/AGENTS.md".into(),
         rev: Some(3),
         hunks: concat!(
             "@@ -7,8 +8,10 @@\n",
-            " \tpublic Darksim(ReadOnlyTargetRules Target) : base(Target)\n",
+            " \tpublic Core(ReadOnlyTargetRules Target) : base(Target)\n",
             " \t{\n",
             " \t\tPCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;\n",
             "-\t\n",
@@ -2748,16 +2748,16 @@ fn preview() {
 
     let mut app = nested();
     app.loose_files = vec![
-        file("//darksim/main/Config/DefaultEngine.ini", FileAction::Edit, false),
-        unopened("//darksim/main/Source/Darksim/New.cpp", FileAction::Add),
+        file("//depot/main/Config/DefaultEngine.ini", FileAction::Edit, false),
+        unopened("//depot/main/Source/Core/New.cpp", FileAction::Add),
     ];
     app.focus = Panel::Files;
     app.handle(Event::Scanned(vec![
-        unopened("//darksim/main/NewThing.cpp", FileAction::Add),
-        unopened("//darksim/main/Changed.cpp", FileAction::Edit),
+        unopened("//depot/main/NewThing.cpp", FileAction::Add),
+        unopened("//depot/main/Changed.cpp", FileAction::Edit),
     ]));
     app.diffs = vec![FileDiff {
-        depot_path: "//darksim/main/AGENTS.md".into(),
+        depot_path: "//depot/main/AGENTS.md".into(),
         rev: Some(3),
         hunks: "@@ -38,7 +38,8 @@\n Intermediate/\n Saved/\n \n-let x = compute(alpha, beta);\n+let x = compute(alpha, gamma);\n+Binaries/\n \n # Ignore UBT\n"
             .into(),

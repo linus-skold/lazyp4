@@ -179,12 +179,12 @@ mod tests {
 
     #[test]
     fn every_directory_gets_its_own_row() {
-        let out = rows(&["Source/Darksim/Actors/Door.cpp"], &[]);
+        let out = rows(&["Source/Core/Actors/Door.cpp"], &[]);
         assert_eq!(
             labels(&out),
             [
                 "Source/",
-                "  Darksim/",
+                "  Core/",
                 "    Actors/",
                 "      Door.cpp"
             ],
@@ -194,10 +194,10 @@ mod tests {
 
     #[test]
     fn siblings_sit_at_the_same_depth() {
-        let out = rows(&["Source/Darksim/A.cpp", "Source/Editor/B.cpp"], &[]);
+        let out = rows(&["Source/Core/A.cpp", "Source/Editor/B.cpp"], &[]);
         assert_eq!(
             labels(&out),
-            ["Source/", "  Darksim/", "    A.cpp", "  Editor/", "    B.cpp"]
+            ["Source/", "  Core/", "    A.cpp", "  Editor/", "    B.cpp"]
         );
     }
 
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn a_collapsed_directory_hides_its_contents() {
-        let out = rows(&["Source/Darksim/A.cpp", "Source/Editor/B.cpp"], &["Source"]);
+        let out = rows(&["Source/Core/A.cpp", "Source/Editor/B.cpp"], &["Source"]);
         assert_eq!(labels(&out), ["Source/"]);
         let Node::Dir { collapsed, files, .. } = &out[0].node else {
             panic!("expected a directory");
@@ -224,12 +224,12 @@ mod tests {
     #[test]
     fn a_directory_deep_in_the_tree_can_be_collapsed_on_its_own() {
         let out = rows(
-            &["Source/Darksim/Actors/Door.cpp"],
-            &["Source/Darksim/Actors"],
+            &["Source/Core/Actors/Door.cpp"],
+            &["Source/Core/Actors"],
         );
         assert_eq!(
             labels(&out),
-            ["Source/", "  Darksim/", "    Actors/"],
+            ["Source/", "  Core/", "    Actors/"],
             "its ancestors stay open"
         );
     }
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn strips_the_root_from_a_depot_path() {
         assert_eq!(
-            relative("//darksim/main/Source/App.cpp", "//darksim/main"),
+            relative("//depot/main/Source/App.cpp", "//depot/main"),
             "Source/App.cpp"
         );
     }
@@ -260,7 +260,7 @@ mod tests {
     fn a_path_outside_the_root_is_left_whole() {
         // Better a long row than a file that silently vanishes.
         assert_eq!(
-            relative("//other/depot/x.txt", "//darksim/main"),
+            relative("//other/depot/x.txt", "//depot/main"),
             "//other/depot/x.txt"
         );
     }

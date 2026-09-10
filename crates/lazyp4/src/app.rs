@@ -2007,8 +2007,8 @@ impl App {
 ///
 /// Perforce writes `<saved by Perforce>` itself when it shelves work into a
 /// changelist you never described, so that placeholder counts as empty.
-/// The depot a stream lives in, as a filespec: `//darksim/main` gives
-/// `//darksim/...`. Nothing for a client with no stream.
+/// The depot a stream lives in, as a filespec: `//depot/main` gives
+/// `//depot/...`. Nothing for a client with no stream.
 fn depot_of(stream: &str) -> Option<String> {
     let depot = stream.strip_prefix("//")?.split('/').next()?;
     (!depot.is_empty()).then(|| format!("//{depot}/..."))

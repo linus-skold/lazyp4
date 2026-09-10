@@ -74,7 +74,7 @@ number of files beneath it:
 ```text
  In changelist 395
    ▾ Source/ 3
-     ▾ Darksim/ 2
+     ▾ Core/ 2
        ▾ Actors/ 2
 M          Door.cpp
 M          Door.h
@@ -185,7 +185,7 @@ until it is resolved. `R` lists what is outstanding:
 
 ```text
 ┌ 1 file(s) to resolve ──────────────────────────┐
-│ 3waytext  #10,#12   darksim/main/Config/…ini   │
+│ 3waytext  #10,#12   depot/main/Config/…ini     │
 └ y yours   t theirs   m merge   a safe   R close┘
 ```
 

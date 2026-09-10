@@ -328,7 +328,7 @@ impl Client {
         }
     }
 
-    /// The streams under `in_depot`, e.g. `//darksim/...`, or every stream on
+    /// The streams under `in_depot`, e.g. `//depot/...`, or every stream on
     /// the server when it is `None`.
     pub fn streams(&mut self, in_depot: Option<&str>) -> Result<Vec<Stream>> {
         let args: Vec<&str> = in_depot.into_iter().collect();

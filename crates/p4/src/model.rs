@@ -238,7 +238,7 @@ pub struct AnnotatedLine {
 /// A stream, from `p4 streams`.
 #[derive(Debug, Clone)]
 pub struct Stream {
-    /// Depot path, e.g. `//darksim/main`.
+    /// Depot path, e.g. `//depot/main`.
     pub path: String,
     pub name: String,
     /// `none` for a mainline.

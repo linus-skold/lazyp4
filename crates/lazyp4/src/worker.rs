@@ -137,7 +137,7 @@ pub enum Request {
     },
     Sync,
     LoadStreams {
-        /// The depot to list, e.g. `//darksim/...`. `None` lists the server.
+        /// The depot to list, e.g. `//depot/...`. `None` lists the server.
         depot: Option<String>,
     },
     SwitchStream {

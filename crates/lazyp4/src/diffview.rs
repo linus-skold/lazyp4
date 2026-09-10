@@ -382,15 +382,15 @@ mod tests {
 
     #[test]
     fn tab_indentation_survives_into_the_view() {
-        // Captured shape from Darksim.Build.cs, which is tab-indented.
-        let out = rows("@@ -7,3 +7,3 @@\n \tpublic Darksim()\n \t{\n \t\tPCHUsage = x;\n", 4);
+        // Captured shape from Core.Build.cs, which is tab-indented.
+        let out = rows("@@ -7,3 +7,3 @@\n \tpublic Core()\n \t{\n \t\tPCHUsage = x;\n", 4);
         let text: Vec<String> = out
             .iter()
             .filter(|r| r.kind == RowKind::Context)
             .map(Row::text)
             .collect();
 
-        assert_eq!(text[0], "    public Darksim()");
+        assert_eq!(text[0], "    public Core()");
         assert_eq!(text[1], "    {");
         assert_eq!(text[2], "        PCHUsage = x;", "nesting is preserved");
         assert!(

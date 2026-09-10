@@ -110,7 +110,7 @@ Description:
 \t# Do not submit - local only
 
 Files:
-\t//darksim/main/AGENTS.md\t# add
+\t//depot/main/AGENTS.md\t# add
 ";
 
     #[test]
@@ -146,7 +146,7 @@ Files:
         // Nothing else may shift.
         assert_eq!(field(&out, "Change").as_deref(), Some("395"));
         assert_eq!(field(&out, "Status").as_deref(), Some("pending"));
-        assert!(out.contains("//darksim/main/AGENTS.md\t# add"));
+        assert!(out.contains("//depot/main/AGENTS.md\t# add"));
         assert!(out.starts_with("# A Perforce Change Specification."));
     }
 
