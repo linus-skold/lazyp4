@@ -812,13 +812,36 @@ fn a_notice_clears_a_previous_error() {
 }
 
 #[test]
+fn without_a_stream_the_streams_list_is_not_narrowed() {
+    let mut app = app();
+    app.handle(Event::Info(ServerInfo {
+        user: "linsko".into(),
+        client: MINE.into(),
+        client_known: true,
+        stream: None,
+        ..Default::default()
+    }));
+    app.last_request();
+    press(&mut app, KeyCode::Char('b'));
+
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::LoadStreams { depot: None })
+    ));
+}
+
+#[test]
 fn b_lists_the_streams_and_marks_the_current_one() {
     let mut app = app();
     app.last_request();
     press(&mut app, KeyCode::Char('b'));
 
     assert_eq!(app.modal, Modal::Streams);
-    assert!(matches!(app.last_request(), Some(Request::LoadStreams)));
+    // The fixture is on //darksim/main, so only that depot is listed.
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::LoadStreams { depot }) if depot.as_deref() == Some("//darksim/...")
+    ));
 
     app.handle(Event::Streams(vec![
         stream("//darksim/main", "mainline"),

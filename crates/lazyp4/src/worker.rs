@@ -5,6 +5,7 @@
 //! never leaves it; the UI talks to it over channels and stays responsive while
 //! a command is in flight.
 
+use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
@@ -135,7 +136,10 @@ pub enum Request {
         depot_path: String,
     },
     Sync,
-    LoadStreams,
+    LoadStreams {
+        /// The depot to list, e.g. `//darksim/...`. `None` lists the server.
+        depot: Option<String>,
+    },
     SwitchStream {
         stream: String,
     },
@@ -359,14 +363,13 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                     }
                 };
 
-                let _ = events.send(Event::Log("changes -l -s pending".into()));
-                let mut pending = match p4.changes(&ChangeFilter::pending()) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        let _ = events.send(Event::Error(format!("changes: {e}")));
-                        Vec::new()
-                    }
-                };
+                // Client syntax: the files this workspace maps, and no others.
+                let view = info
+                    .as_ref()
+                    .filter(|i| i.client_known)
+                    .map(|i| format!("//{}/...", i.client));
+
+                let mut pending = pending_changes(p4, &events, info.as_ref(), view.as_deref());
 
                 // `p4 changes` never reports the default changelist, so it has
                 // to be built from the files opened in it.
@@ -381,14 +384,15 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                     }
                 }
 
-                let _ = events.send(Event::Log("changes -l -s submitted -m 50".into()));
-                let submitted = match p4.changes(&ChangeFilter::submitted(50)) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        let _ = events.send(Event::Error(format!("changes: {e}")));
-                        Vec::new()
-                    }
+                let history = ChangeFilter {
+                    path: view.clone(),
+                    ..ChangeFilter::submitted(50)
                 };
+                let _ = events.send(Event::Log(format!(
+                    "changes -l -s submitted -m 50 {}",
+                    view.as_deref().unwrap_or_default()
+                )));
+                let submitted = changes(p4, &events, &history);
 
                 let _ = events.send(Event::Changes { pending, submitted });
             }
@@ -528,9 +532,12 @@ fn run(requests: Receiver<Request>, events: Sender<Event>) {
                 }
                 let _ = events.send(Event::Changed);
             }
-            Request::LoadStreams => {
-                let _ = events.send(Event::Log("streams".into()));
-                match p4.streams() {
+            Request::LoadStreams { depot } => {
+                let _ = events.send(Event::Log(match &depot {
+                    Some(d) => format!("streams {d}"),
+                    None => "streams".into(),
+                }));
+                match p4.streams(depot.as_deref()) {
                     Ok(streams) => {
                         let _ = events.send(Event::Streams(streams));
                     }
@@ -919,6 +926,65 @@ fn whole_content(
     let _ = events.send(Event::Log(format!("where {path}")));
     let local = c.tagged.local_path(path).ok().flatten()?;
     std::fs::read_to_string(local).ok()
+}
+
+/// `p4 changes`, reporting a failure as an empty list rather than losing the
+/// rest of the refresh.
+fn changes(p4: &mut Client, events: &Sender<Event>, filter: &ChangeFilter) -> Vec<Changelist> {
+    match p4.changes(filter) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = events.send(Event::Error(format!("changes: {e}")));
+            Vec::new()
+        }
+    }
+}
+
+/// Pending work worth showing: everything on this workspace, plus anybody
+/// else's changelists that touch a file this workspace maps.
+///
+/// Two calls rather than one narrowed call, because a filespec drops a
+/// changelist with no open files, and an empty changelist of ours is still
+/// ours to see. Without a client to narrow by, the whole server, as before.
+fn pending_changes(
+    p4: &mut Client,
+    events: &Sender<Event>,
+    info: Option<&ServerInfo>,
+    view: Option<&str>,
+) -> Vec<Changelist> {
+    let (Some(info), Some(view)) = (info, view) else {
+        let _ = events.send(Event::Log("changes -l -s pending".into()));
+        return changes(p4, events, &ChangeFilter::pending());
+    };
+
+    let _ = events.send(Event::Log(format!(
+        "changes -l -s pending -c {}",
+        info.client
+    )));
+    let mut out = changes(
+        p4,
+        events,
+        &ChangeFilter {
+            client: Some(info.client.clone()),
+            ..ChangeFilter::pending()
+        },
+    );
+
+    let _ = events.send(Event::Log(format!("changes -l -s pending {view}")));
+    let elsewhere = changes(
+        p4,
+        events,
+        &ChangeFilter {
+            path: Some(view.to_owned()),
+            ..ChangeFilter::pending()
+        },
+    );
+
+    let ours: HashSet<ChangeId> = out.iter().map(|cl| cl.id).collect();
+    out.extend(elsewhere.into_iter().filter(|cl| !ours.contains(&cl.id)));
+    // Two lists joined are no longer newest-first.
+    out.sort_by_key(|cl| std::cmp::Reverse(cl.id));
+    out
 }
 
 /// Picks the command that can actually see this changelist's files.

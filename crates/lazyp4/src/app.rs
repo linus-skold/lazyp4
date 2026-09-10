@@ -1004,7 +1004,10 @@ impl App {
         self.modal = Modal::Streams;
         self.error = None;
         self.busy = true;
-        self.worker.send(Request::LoadStreams);
+        // A switch stays inside one depot, so the rest of the server is noise.
+        self.worker.send(Request::LoadStreams {
+            depot: depot_of(self.current_stream()),
+        });
     }
 
     fn streams_key(&mut self, key: Key) {
@@ -2004,6 +2007,13 @@ impl App {
 ///
 /// Perforce writes `<saved by Perforce>` itself when it shelves work into a
 /// changelist you never described, so that placeholder counts as empty.
+/// The depot a stream lives in, as a filespec: `//darksim/main` gives
+/// `//darksim/...`. Nothing for a client with no stream.
+fn depot_of(stream: &str) -> Option<String> {
+    let depot = stream.strip_prefix("//")?.split('/').next()?;
+    (!depot.is_empty()).then(|| format!("//{depot}/..."))
+}
+
 pub fn has_description(description: &str) -> bool {
     let text = description.trim();
     !text.is_empty() && text != "<saved by Perforce>"

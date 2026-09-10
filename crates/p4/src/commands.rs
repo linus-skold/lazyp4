@@ -328,9 +328,11 @@ impl Client {
         }
     }
 
-    /// Every stream in the depot.
-    pub fn streams(&mut self) -> Result<Vec<Stream>> {
-        let out = self.run("streams", &[])?;
+    /// The streams under `in_depot`, e.g. `//darksim/...`, or every stream on
+    /// the server when it is `None`.
+    pub fn streams(&mut self, in_depot: Option<&str>) -> Result<Vec<Stream>> {
+        let args: Vec<&str> = in_depot.into_iter().collect();
+        let out = self.run("streams", &args)?;
         Ok(out
             .records
             .iter()
