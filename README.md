@@ -6,24 +6,9 @@ A terminal UI for Perforce (Helix Core), in the style of lazygit. Browse
 changelists and their files in panels, read diffs in the shell, and sync,
 arrange, shelve, resolve and submit a task without dropping to the command line.
 
-```text
-┌ 1  Status ───────────────┐┌ 0  Diff  Foo.cpp#3 ─────────────────────┐
-│ user    linsko           ││ @@ -38,7 +38,8 @@                       │
-│ client  linus-desktop    ││ 38 38  Intermediate/                    │
-│ stream  //darksim/main   ││ 41    -let x = compute(alpha, beta);    │
-├ 2  Files of 395 ─────────┤│    41 +let x = compute(alpha, gamma);   │
-│   ▾ Source/ 2            ││    42 +Binaries/                        │
-│ M    Door.cpp            ││                                         │
-│ A    Tool.cpp            ││                                         │
-├ 3  Changelists ──────────┤│                                         │
-│ Local 2 │ Shelved 1 │ …  ││                                         │
-│ ▸    395 # Do not submit ││                                         │
-│ ▸    308 Interaction     ││                                         │
-├ 4  History (1) ──────────┤│                                         │
-│ ✓    396 # Updated .p4…  ││                                         │
-└──────────────────────────┘└─────────────────────────────────────────┘
- space  move   d  revert   H  history   a  blame   r  refresh   ? help
-```
+![lazyp4: Status, Files, Changelists and History panels down the left, with a
+diff filling the right and the keys for the focused panel along the
+bottom](example-lazyp4.png)
 
 ## Install
 
