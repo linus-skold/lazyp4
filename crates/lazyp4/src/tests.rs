@@ -278,14 +278,15 @@ fn brackets_do_not_move_focus_between_panels() {
 #[test]
 fn tabs_partition_pending_changelists() {
     let app = app();
-    // default, 395, 308 and 117 are ours and unshelved; 166 is shelved;
-    // 106 belongs to another user.
-    assert_eq!(app.tab_count(ChangeTab::Local), 4);
+    // default, 395 and 308 are on this workspace and unshelved; 166 is
+    // shelved; 117 is ours but on another workspace, and 106 is another
+    // user's, so both are Others.
+    assert_eq!(app.tab_count(ChangeTab::Local), 3);
     assert_eq!(app.tab_count(ChangeTab::Shelved), 1);
-    assert_eq!(app.tab_count(ChangeTab::Others), 1);
+    assert_eq!(app.tab_count(ChangeTab::Others), 2);
 
     let ids: Vec<String> = app.tab_changes().iter().map(|c| c.id.to_string()).collect();
-    assert_eq!(ids, ["default", "395", "308", "117"]);
+    assert_eq!(ids, ["default", "395", "308"]);
 }
 
 #[test]
@@ -300,9 +301,9 @@ fn the_default_changelist_is_listed_and_explains_itself() {
 }
 
 #[test]
-fn ownership_is_by_user_so_it_survives_an_unresolved_client() {
-    // Running outside a workspace leaves the client unknown. Our changelists
-    // must still be ours.
+fn without_a_client_the_tabs_fall_back_to_the_user() {
+    // Running outside a workspace leaves the client unknown, so there is
+    // nothing to match on. Our changelists must still be ours.
     let mut app = app();
     app.handle(Event::Info(ServerInfo {
         user: "linsko".into(),
@@ -317,8 +318,16 @@ fn ownership_is_by_user_so_it_survives_an_unresolved_client() {
 }
 
 #[test]
-fn a_changelist_on_another_workspace_is_marked() {
-    let out = render(&app(), 120, 40);
+fn a_changelist_on_another_workspace_is_listed_under_others_and_marked() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char(']'));
+    press(&mut app, KeyCode::Char(']')); // Others
+
+    let ids: Vec<String> = app.tab_changes().iter().map(|c| c.id.to_string()).collect();
+    assert_eq!(ids, ["117", "106"], "ours elsewhere sits beside theirs");
+
+    let out = render(&app, 120, 40);
     assert!(
         out.contains("@jenkins-builder-2"),
         "one of our changelists is open elsewhere and should say so\n{out}"
@@ -344,9 +353,9 @@ fn submitted_changelists_live_in_history_not_the_tabs() {
 #[test]
 fn the_tab_bar_shows_counts_and_marks_the_open_tab() {
     let out = render(&app(), 120, 40);
-    assert!(out.contains("Local 4"), "{out}");
+    assert!(out.contains("Local 3"), "{out}");
     assert!(out.contains("Shelved 1"), "{out}");
-    assert!(out.contains("Others 1"), "{out}");
+    assert!(out.contains("Others 2"), "{out}");
 }
 
 #[test]
@@ -654,7 +663,7 @@ fn space_on_the_default_changelist_asks_where_to_move() {
 }
 
 #[test]
-fn the_picker_offers_only_our_own_changelists() {
+fn the_picker_offers_only_changelists_on_this_workspace() {
     let mut app = on_default();
     press(&mut app, KeyCode::Char(' '));
 
@@ -667,8 +676,9 @@ fn the_picker_offers_only_our_own_changelists() {
             Destination::New => None,
         })
         .collect();
-    // 106 belongs to another user; 166 is ours even though it is shelved.
-    assert_eq!(ids, ["395", "308", "166", "117"]);
+    // 106 belongs to another user and 117 is on another workspace, so files
+    // cannot be moved into either; 166 is here even though it is shelved.
+    assert_eq!(ids, ["395", "308", "166"]);
 }
 
 #[test]
@@ -1744,6 +1754,7 @@ fn somebody_elses_changelist_is_not_submitted() {
     app.focus = Panel::Changelists;
     press(&mut app, KeyCode::Char(']'));
     press(&mut app, KeyCode::Char(']')); // Others
+    press(&mut app, KeyCode::Char('j')); // 106, another user's
     app.last_request();
 
     press(&mut app, KeyCode::Char('c'));
@@ -1752,6 +1763,22 @@ fn somebody_elses_changelist_is_not_submitted() {
         .error
         .as_deref()
         .is_some_and(|e| e.contains("somebody else")));
+}
+
+#[test]
+fn our_changelist_on_another_workspace_is_not_submitted() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char(']'));
+    press(&mut app, KeyCode::Char(']')); // Others, first entry is 117
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(app.confirm.is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("another workspace")));
 }
 
 #[test]

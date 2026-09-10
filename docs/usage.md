@@ -14,12 +14,15 @@ Panels run down the left, with the diff filling the right.
 
 | Tab | Contents |
 | --- | --- |
-| Local | yours, with nothing shelved |
-| Shelved | yours, with content shelved on the server |
-| Others | somebody else's |
+| Local | on this workspace, with nothing shelved |
+| Shelved | on this workspace, with content shelved on the server |
+| Others | on another workspace |
 
-A changelist is yours when your user owns it, not when it is open on this
-workspace — you may have several. One open elsewhere is tagged with its client
+A changelist is local when it is open on the client you are connected to.
+Perforce ties a pending changelist to one workspace, so your own changelists on
+your other workspaces sit under `Others`, tagged with their client name, and
+lazyp4 does not shelve, submit, or move files into them. Started outside a
+workspace the server resolves no client, so the tabs fall back to your user
 name. `Local` also carries the **default** changelist, which `p4 changes` never
 reports, so anything checked out without a numbered changelist still appears.
 

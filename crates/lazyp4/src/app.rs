@@ -73,7 +73,7 @@ pub enum ChangeTab {
     Local,
     /// Pending on this workspace, with content shelved on the server.
     Shelved,
-    /// Pending on somebody else's workspace.
+    /// Pending on another workspace, ours or somebody else's.
     Others,
 }
 
@@ -382,21 +382,34 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// A changelist is ours if our user owns it.
+    /// A changelist is on this workspace if it names our client.
     ///
-    /// Deliberately not keyed on the client: a user commonly has several
-    /// workspaces, and lazyp4 started outside one has no client name at all,
-    /// which would otherwise put every changelist under Others.
-    fn is_mine(&self, cl: &Changelist) -> bool {
-        !self.my_user().is_empty() && cl.user == self.my_user()
+    /// Perforce ties a pending changelist to one client, so this is also what
+    /// decides whether we can shelve it, submit it, or move files into it.
+    /// Started outside a workspace the server resolves no client, so fall back
+    /// to the user rather than disowning everything.
+    fn is_here(&self, cl: &Changelist) -> bool {
+        match self.my_client() {
+            "" => !self.my_user().is_empty() && cl.user == self.my_user(),
+            client => cl.client == client,
+        }
+    }
+
+    /// Why a changelist is out of reach, for the actions that need it here.
+    fn not_here(&self, cl: &Changelist) -> &'static str {
+        if cl.user == self.my_user() {
+            "that changelist is on another workspace"
+        } else {
+            "that changelist belongs to somebody else"
+        }
     }
 
     fn belongs_in(&self, cl: &Changelist, tab: ChangeTab) -> bool {
-        let mine = self.is_mine(cl);
+        let here = self.is_here(cl);
         match tab {
-            ChangeTab::Local => mine && !cl.shelved,
-            ChangeTab::Shelved => mine && cl.shelved,
-            ChangeTab::Others => !mine,
+            ChangeTab::Local => here && !cl.shelved,
+            ChangeTab::Shelved => here && cl.shelved,
+            ChangeTab::Others => !here,
         }
     }
 
@@ -1128,8 +1141,8 @@ impl App {
             self.error = Some("only a numbered pending changelist can be shelved".into());
             return;
         }
-        if !self.is_mine(&cl) {
-            self.error = Some("that changelist belongs to somebody else".into());
+        if !self.is_here(&cl) {
+            self.error = Some(self.not_here(&cl).into());
             return;
         }
 
@@ -1408,8 +1421,8 @@ impl App {
             self.editing = Some(Editing::SubmitDefault);
             return;
         }
-        if !self.is_mine(&cl) {
-            self.error = Some("that changelist belongs to somebody else".into());
+        if !self.is_here(&cl) {
+            self.error = Some(self.not_here(&cl).into());
             return;
         }
         if !has_description(&cl.description) {
@@ -1786,7 +1799,7 @@ impl App {
             .pending
             .iter()
             .filter(|cl| {
-                self.is_mine(cl) && cl.id != ChangeId::Default && Some(cl.id) != exclude
+                self.is_here(cl) && cl.id != ChangeId::Default && Some(cl.id) != exclude
             })
             .map(|cl| Destination::Existing(cl.id, cl.summary().to_owned()))
             .collect();
