@@ -1,13 +1,9 @@
 //! Compiles the shim and links the P4API.
 //!
-//! Both native dependencies can be supplied by hand — `P4API_DIR` and
-//! `OPENSSL_LIB_DIR` — but neither has to be. Left alone, this script fetches
-//! the P4API distribution for the target and builds OpenSSL from source, so a
-//! fresh clone needs nothing beyond Rust, a C++ toolchain and Perl.
-//!
-//! The P4API is fetched rather than vendored because its licence does not
-//! permit redistribution, and because the Windows distribution alone is 410 MB
-//! of static libraries — two of its archives are past GitHub's per-file limit.
+//! Left alone this fetches the P4API for the target and builds OpenSSL from
+//! source; `P4API_DIR` and `OPENSSL_LIB_DIR` short-circuit either step. Why it
+//! fetches rather than vendors, and every variable it reads, are in
+//! `docs/building.md`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

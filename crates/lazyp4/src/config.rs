@@ -1,12 +1,10 @@
 //! The config file: which colours, which keys, and how wide a tab is.
 //!
-//! A tiny `[section]` / `key = value` reader rather than a TOML crate, the way
-//! [`crate::app`]'s sibling `p4::spec` reads a Perforce form: the file shape is
-//! flat and a dependency would be the larger cost.
-//!
-//! Everything is optional. A file that is not there, or a key that is not
-//! understood, leaves the default in place — and an unknown key is reported
-//! rather than swallowed, since a silent typo is worse than a loud one.
+//! A tiny `[section]` / `key = value` reader rather than a TOML crate, since
+//! the file shape is flat and a dependency would be the larger cost. Everything
+//! in it is optional, and an unknown key is reported rather than swallowed —
+//! a silent typo is worse than a loud one. The file itself is documented in
+//! `docs/configuration.md`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
