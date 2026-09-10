@@ -7,21 +7,32 @@ Panels run down the left, with the diff filling the right.
 | `1` | Status | user, client, stream, server |
 | `2` | Files | files of the selected changelist |
 | `3` | Changelists | pending changelists, in three tabs |
-| `4` | History | submitted changelists |
+| `4` | History | submits against this workspace |
 | `0` | Diff | the selected file's diff |
 
 `3` holds the pending work, split by where its content lives:
 
 | Tab | Contents |
 | --- | --- |
-| Local | yours, with nothing shelved |
-| Shelved | yours, with content shelved on the server |
-| Others | somebody else's |
+| Local | on this workspace, with nothing shelved |
+| Shelved | on this workspace, with content shelved on the server |
+| Others | on another workspace |
 
-A changelist is yours when your user owns it, not when it is open on this
-workspace — you may have several. One open elsewhere is tagged with its client
+A changelist is local when it is open on the client you are connected to.
+Perforce ties a pending changelist to one workspace, so your own changelists on
+your other workspaces sit under `Others`, tagged with their client name, and
+lazyp4 does not shelve, submit, or move files into them. Started outside a
+workspace the server resolves no client, so the tabs fall back to your user
 name. `Local` also carries the **default** changelist, which `p4 changes` never
 reports, so anything checked out without a numbered changelist still appears.
+
+`Others` is not the whole server. lazyp4 asks for the pending changelists that
+touch a file your client maps, so what you see there is work that can collide
+with yours, not every changelist in the depot.
+
+`4` is narrowed the same way: the 50 most recent changes submitted against the
+files your workspace maps, whoever submitted them. A submit to another stream
+or another depot does not appear.
 
 Selecting a changelist — in either `3` or `4` — repoints Files and Diff at it.
 
@@ -161,7 +172,9 @@ leaves the shelf alone, so the same shelf can be unshelved on several machines.
 are left alone — Perforce refuses to overwrite them rather than discarding
 work.
 
-`b` lists the depot's streams, with the one this workspace is on marked. `Enter`
+`b` lists the streams of the depot you are in, with the one this workspace is
+on marked. A switch cannot leave the depot, so the rest of the server is left
+out; a client with no stream gets the full list. `Enter`
 switches, after a confirmation: the workspace is resynced to match, which can
 move a lot of data, and Perforce refuses outright while any file is open.
 

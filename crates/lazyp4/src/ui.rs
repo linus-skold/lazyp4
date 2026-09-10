@@ -519,8 +519,8 @@ fn change_item(t: &Theme, cl: &Changelist, my_client: &str) -> ListItem<'static>
         Span::raw(cl.summary().to_owned()),
     ];
 
-    // Ownership is by user, so one of our own changelists can be sitting on a
-    // different workspace. Say so, rather than implying it is checked out here.
+    // History and the Others tab both carry changelists from elsewhere. Name
+    // the workspace, rather than implying the content is checked out here.
     if !my_client.is_empty() && !cl.client.is_empty() && cl.client != my_client {
         spans.push(Span::styled(
             format!(" @{}", cl.client),
