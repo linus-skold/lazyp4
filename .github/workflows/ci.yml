@@ -71,7 +71,15 @@ jobs:
       - name: Test
         run: cargo test
 
-      # Not -D warnings: the tree carries a few that predate this workflow, and
-      # failing on them would say nothing about the change under test.
+      # One platform only. Clippy is a check-mode pass, so it shares no
+      # artifacts with the build above and recompiles the graph — including
+      # p4-sys's build script, which compiles OpenSSL from source a second
+      # time. That is nine minutes per runner for output all three produce
+      # identically.
+      #
+      # Not -D warnings either: the tree carries a few that predate this
+      # workflow, and failing on them would say nothing about the change
+      # under test.
       - name: Clippy
+        if: matrix.name == 'linux-x86_64'
         run: cargo clippy --all-targets
