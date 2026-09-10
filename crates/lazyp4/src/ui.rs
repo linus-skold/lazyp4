@@ -587,6 +587,27 @@ fn tab_bar(app: &App) -> Line<'static> {
 
 fn draw_history(frame: &mut Frame, app: &App, area: Rect) {
     let t = &app.config.theme;
+    // Opened on a change, the panel is that change's file tree.
+    if let Some(open) = &app.history_open {
+        let block = panel_block(app, Panel::History, Some(format!("of {}", open.change)));
+        let empty = if open.loaded {
+            "nothing in this change"
+        } else {
+            "loading…"
+        };
+        draw_tree_rows(
+            frame,
+            app,
+            area,
+            block,
+            Panel::History,
+            app.opened_rows(),
+            open.sel,
+            empty,
+        );
+        return;
+    }
+
     let visible = app.visible_submitted();
     let items: Vec<ListItem> = visible
         .iter()
@@ -604,26 +625,49 @@ fn draw_history(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
-    let t = &app.config.theme;
     let block = panel_block(
         app,
         Panel::Files,
         app.selected_change().map(|cl| format!("of {}", cl.id)),
     );
+    let empty = if app.files_for.is_none() {
+        "loading…"
+    } else if app.scanning {
+        "scanning the workspace…"
+    } else if app.scanned.is_empty() {
+        "no open files — press u to scan for untracked ones"
+    } else {
+        "no files visible from this workspace"
+    };
+    draw_tree_rows(
+        frame,
+        app,
+        area,
+        block,
+        Panel::Files,
+        app.file_rows(),
+        app.file_sel,
+        empty,
+    );
+}
 
-    let rows = app.file_rows();
+/// A file tree, as drawn by the Files panel and by the History panel opened on
+/// a change.
+#[allow(clippy::too_many_arguments)]
+fn draw_tree_rows(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    block: Block<'static>,
+    panel: Panel,
+    rows: Vec<FileRow<'_>>,
+    sel: usize,
+    empty: &str,
+) {
+    let t = &app.config.theme;
     if rows.is_empty() {
-        let msg = if app.files_for.is_none() {
-            "loading…".to_owned()
-        } else if app.scanning {
-            "scanning the workspace…".to_owned()
-        } else if app.scanned.is_empty() {
-            "no open files — press u to scan for untracked ones".to_owned()
-        } else {
-            "no files visible from this workspace".to_owned()
-        };
         frame.render_widget(
-            Paragraph::new(msg)
+            Paragraph::new(empty.to_owned())
                 .style(Style::default().fg(t.idle))
                 .block(block),
             area,
@@ -650,22 +694,26 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
                 files,
                 ..
             } => {
-                if selectable == app.file_sel {
+                if selectable == sel {
                     selected_row = Some(row);
                 }
                 let item = dir_item(t, label, *depth, *collapsed, *files);
-                let item = mark_range(t, item, app.row_selected(selectable));
+                // A range only ever exists in the Files panel.
+                let ranged = panel == Panel::Files && app.row_selected(selectable);
+                let item = mark_range(t, item, ranged);
                 selectable += 1;
                 item
             }
             FileRow::File {
                 entry, label, depth, ..
             } => {
-                if selectable == app.file_sel {
+                if selectable == sel {
                     selected_row = Some(row);
                 }
                 let item = file_item(t, entry, label, *depth);
-                let item = mark_range(t, item, app.row_selected(selectable));
+                // A range only ever exists in the Files panel.
+                let ranged = panel == Panel::Files && app.row_selected(selectable);
+                let item = mark_range(t, item, ranged);
                 selectable += 1;
                 item
             }
@@ -676,7 +724,7 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_stateful_widget(
         List::new(items)
             .block(block)
-            .highlight_style(selection_style(t, app.focus == Panel::Files)),
+            .highlight_style(selection_style(t, app.focus == panel)),
         area,
         &mut state,
     );
@@ -790,7 +838,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     let t = &app.config.theme;
-    let Some(file) = app.selected_file() else {
+    let Some(file) = app.browsed_file() else {
         frame.render_widget(
             Paragraph::new("select a file")
                 .style(Style::default().fg(t.idle))
@@ -807,7 +855,7 @@ fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     let block = panel_block(app, Panel::Diff, Some(title));
 
     let Some(diff) = app.selected_diff() else {
-        let msg = if app.diffs_for.is_none() {
+        let msg = if !app.diffs_ready() {
             "loading…"
         } else {
             "no diff for this file"
@@ -995,7 +1043,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(ink),
                 ));
             };
-            for action in panel_actions(app.focus) {
+            for action in panel_actions(app) {
                 hint(&mut spans, *action, t.focus, t.text);
             }
             for action in [Action::Refresh, Action::Help, Action::Quit] {
@@ -1018,8 +1066,12 @@ fn key_of(app: &App, action: Action) -> String {
 
 /// The handful of actions worth showing for the focused panel. Which keys
 /// reach them is the keymap's business, not this list's.
-fn panel_actions(panel: Panel) -> &'static [Action] {
-    match panel {
+fn panel_actions(app: &App) -> &'static [Action] {
+    // Opened on a change, History is a file tree with a way back out.
+    if app.focus == Panel::History && app.history_open.is_some() {
+        return &[Action::Blame, Action::History, Action::Cancel];
+    }
+    match app.focus {
         Panel::Files => &[
             Action::Move,
             Action::RevertFiles,

@@ -34,7 +34,19 @@ with yours, not every changelist in the depot.
 files your workspace maps, whoever submitted them. A submit to another stream
 or another depot does not appear.
 
-Selecting a changelist — in either `3` or `4` — repoints Files and Diff at it.
+Files always shows the changelist selected in `3`. Browsing `4` does not move
+it: work in progress and what is already in the depot are different questions,
+and the answer to one should not disappear while you ask the other.
+
+`Enter` in `4` opens the change under the cursor in place. The panel stops
+being a list of changes and becomes that change's file tree, which you browse
+like any other tree — `j` and `k` to move, `h` and `l` to fold. The Diff panel
+follows the cursor, showing each file against the revision before the change.
+`Esc` closes the change and brings the list back. Nothing there can be edited:
+a submitted change is history.
+
+`Enter` in `3` has a file tree below it already, so it steps down into Files
+instead.
 
 ## Reading a diff
 

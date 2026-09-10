@@ -601,7 +601,9 @@ impl Action {
     pub fn panels(self) -> &'static [Panel] {
         match self {
             Action::RevertFiles | Action::ShelveFiles => &[Panel::Files],
-            Action::DeleteChange => &[Panel::Changelists],
+            // History too, so `d` on a submitted change says why it cannot be
+            // deleted rather than doing nothing.
+            Action::DeleteChange => &[Panel::Changelists, Panel::History],
             _ => &[],
         }
     }
@@ -669,7 +671,7 @@ impl Action {
             Action::Unshelve => row("unshelve into another", None),
             Action::DeleteShelf => row("delete the shelf", None),
             Action::Undo => row("undo a submitted change", None),
-            Action::Fullscreen => row("fullscreen the diff", None),
+            Action::Fullscreen => row("open a changelist, or fullscreen the diff", None),
             Action::Sync => row("sync the workspace", None),
             Action::Streams => row("streams", None),
             Action::Resolve => row("resolve what is conflicting", None),
@@ -697,6 +699,7 @@ impl Action {
             Action::DeleteChange => "delete",
             Action::Undo => "undo",
             Action::Fullscreen => "fullscreen",
+            Action::Cancel => "back",
             Action::Left => "scroll",
             Action::Refresh => "refresh",
             Action::Help => "help",

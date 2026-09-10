@@ -95,13 +95,30 @@ impl ChangeTab {
     }
 }
 
-/// Which half of the Files panel a row belongs to.
+/// Which tree a row belongs to. Each is folded on its own: the same directory
+/// holds different files in each, so folding one must not fold the others.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Group {
     /// Open in the selected changelist.
     InChange,
     /// The default changelist, plus anything the workspace scan found.
     Loose,
+    /// The change the History panel is opened on.
+    Opened,
+}
+
+/// The submitted change the History panel is opened on.
+///
+/// It carries its own files, cursor and diffs. The Files panel is never
+/// repointed here — it always follows the changelist selected in Changelists.
+pub struct OpenChange {
+    pub change: ChangeId,
+    pub files: Vec<FileEntry>,
+    /// False until the file list arrives.
+    pub loaded: bool,
+    pub sel: usize,
+    pub diffs: Vec<FileDiff>,
+    pub diffs_loaded: bool,
 }
 
 /// A row of the Files panel.
@@ -206,10 +223,13 @@ pub struct App {
     /// Submitted changelists, newest first.
     pub submitted: Vec<Changelist>,
     pub history_sel: usize,
+    /// The change the History panel is opened on, showing its files instead of
+    /// the list of changes.
+    pub history_open: Option<OpenChange>,
 
-    /// Whether Changelists or History last moved, and so which one the Files
-    /// and Diff panels are following.
-    pub change_source: Panel,
+    /// Which file tree the Diff panel is showing: the Files panel's, or the
+    /// change opened in History.
+    pub diff_source: Panel,
 
     /// Files open in the selected changelist.
     pub files: Vec<FileEntry>,
@@ -322,7 +342,8 @@ impl App {
             change_sel: 0,
             submitted: Vec::new(),
             history_sel: 0,
-            change_source: Panel::Changelists,
+            history_open: None,
+            diff_source: Panel::Files,
             files: Vec::new(),
             loose_files: Vec::new(),
             files_for: None,
@@ -456,11 +477,28 @@ impl App {
             .count()
     }
 
-    /// The changelist the Files and Diff panels are following.
+    /// The changelist the Files panel is following, which is always the one
+    /// selected in Changelists.
     pub fn selected_change(&self) -> Option<Changelist> {
-        match self.change_source {
-            Panel::History => self.visible_submitted().get(self.history_sel).map(|cl| (*cl).clone()),
-            _ => self.tab_changes().get(self.change_sel).map(|cl| (*cl).clone()),
+        self.tab_changes().get(self.change_sel).map(|cl| (*cl).clone())
+    }
+
+    /// The submitted change under the History cursor.
+    pub fn selected_submit(&self) -> Option<Changelist> {
+        self.visible_submitted()
+            .get(self.history_sel)
+            .map(|cl| (*cl).clone())
+    }
+
+    /// The changelist a command acts on: History's submitted change while that
+    /// panel has focus, otherwise the Changelists selection.
+    pub fn focused_change(&self) -> Option<Changelist> {
+        match self.focus {
+            Panel::History => match &self.history_open {
+                Some(open) => self.submitted.iter().find(|cl| cl.id == open.change).cloned(),
+                None => self.selected_submit(),
+            },
+            _ => self.selected_change(),
         }
     }
 
@@ -478,6 +516,14 @@ impl App {
             return stream;
         }
         tree::common_root(self.all_files().iter().map(|f| f.depot_path.as_str()))
+    }
+
+    /// The same, for a file list of its own.
+    fn root_of(&self, files: &[FileEntry]) -> String {
+        if let Some(stream) = self.info.as_ref().and_then(|i| i.stream.clone()) {
+            return stream;
+        }
+        tree::common_root(files.iter().map(|f| f.depot_path.as_str()))
     }
 
     /// The selected row, or `None` when nothing is selectable.
@@ -572,10 +618,97 @@ impl App {
         rows
     }
 
+    /// The opened change's files as tree rows. One group, and no second half:
+    /// nothing can be moved in or out of a submitted change.
+    pub fn opened_rows(&self) -> Vec<FileRow<'_>> {
+        let Some(open) = &self.history_open else {
+            return Vec::new();
+        };
+        let root = self.root_of(&open.files);
+        let entries: Vec<tree::Entry> = open
+            .files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| tree::Entry {
+                index: i,
+                path: tree::relative(&f.depot_path, &root),
+            })
+            .collect();
+
+        tree::build(&entries, &|path: &str| {
+            self.collapsed
+                .contains(&(Group::Opened, path.to_owned()))
+        })
+        .into_iter()
+        .map(|row| match row.node {
+            tree::Node::Dir {
+                path,
+                files,
+                collapsed,
+            } => FileRow::Dir {
+                group: Group::Opened,
+                path,
+                label: row.label,
+                depth: row.depth,
+                collapsed,
+                files,
+            },
+            tree::Node::File { index } => FileRow::File {
+                index,
+                entry: &open.files[index],
+                label: row.label,
+                depth: row.depth,
+            },
+        })
+        .collect()
+    }
+
+    /// The row under the History panel's cursor while a change is open.
+    fn opened_row(&self) -> Option<FileRow<'_>> {
+        let open = self.history_open.as_ref()?;
+        self.opened_rows()
+            .into_iter()
+            .filter(FileRow::selectable)
+            .nth(open.sel)
+    }
+
+    fn opened_selectable_count(&self) -> usize {
+        self.opened_rows().iter().filter(|r| r.selectable()).count()
+    }
+
+    /// Whether the cursor is in the opened change's tree rather than in Files.
+    fn browsing_opened(&self) -> bool {
+        self.focus == Panel::History && self.history_open.is_some()
+    }
+
+    /// The file the Diff panel is showing.
+    pub fn browsed_file(&self) -> Option<&FileEntry> {
+        if self.diff_source != Panel::History {
+            return self.selected_file();
+        }
+        let open = self.history_open.as_ref()?;
+        match self.opened_row()? {
+            FileRow::File { index, .. } => open.files.get(index),
+            _ => None,
+        }
+    }
+
     /// The diff of the file under the cursor, if it has been fetched.
     pub fn selected_diff(&self) -> Option<&FileDiff> {
-        let file = self.selected_file()?;
-        self.diffs.iter().find(|d| d.depot_path == file.depot_path)
+        let file = self.browsed_file()?;
+        let diffs = match (&self.history_open, self.diff_source) {
+            (Some(open), Panel::History) => &open.diffs,
+            _ => &self.diffs,
+        };
+        diffs.iter().find(|d| d.depot_path == file.depot_path)
+    }
+
+    /// Whether the diffs the Diff panel wants have arrived.
+    pub fn diffs_ready(&self) -> bool {
+        match (&self.history_open, self.diff_source) {
+            (Some(open), Panel::History) => open.diffs_loaded,
+            _ => self.diffs_for.is_some(),
+        }
     }
 
     /// Nothing arrived; only the spinner moves.
@@ -643,6 +776,19 @@ impl App {
                 files,
                 default_files,
             } => {
+                // The change opened in History asked for its own copy.
+                if self
+                    .history_open
+                    .as_ref()
+                    .is_some_and(|o| o.change == change && !o.loaded)
+                {
+                    let open = self.history_open.as_mut().expect("just checked");
+                    open.files = files;
+                    open.loaded = true;
+                    open.sel = 0;
+                    self.request_opened_diff();
+                    return;
+                }
                 // A stale answer for a changelist we have moved off.
                 if self.pending_files == Some(change) {
                     self.pending_files = None;
@@ -717,6 +863,16 @@ impl App {
                 self.worker.send(Request::Refresh);
             }
             Event::Diff { change, files } => {
+                if self
+                    .history_open
+                    .as_ref()
+                    .is_some_and(|o| o.change == change && !o.diffs_loaded)
+                {
+                    let open = self.history_open.as_mut().expect("just checked");
+                    open.diffs = files;
+                    open.diffs_loaded = true;
+                    return;
+                }
                 if self.pending_diff == Some(change) {
                     self.pending_diff = None;
                     self.diffs = files;
@@ -794,6 +950,7 @@ impl App {
         if let KeyCode::Char(c @ '0'..='9') = key.code {
             if let Some(panel) = Panel::from_number(c as u8 - b'0') {
                 self.focus = panel;
+                self.point_diff_at_focus();
                 return;
             }
         }
@@ -861,8 +1018,14 @@ impl App {
             Action::Move => self.move_selected_file(),
             Action::Fullscreen => self.toggle_fullscreen(),
             Action::Cancel => self.cancel(),
-            Action::NextPanel => self.focus = self.focus.step(1),
-            Action::PrevPanel => self.focus = self.focus.step(-1),
+            Action::NextPanel => {
+                self.focus = self.focus.step(1);
+                self.point_diff_at_focus();
+            }
+            Action::PrevPanel => {
+                self.focus = self.focus.step(-1);
+                self.point_diff_at_focus();
+            }
             // Within a panel rather than between panels: only Changelists has
             // tabs today, so elsewhere these do nothing.
             Action::NextTab => self.switch_tab(1),
@@ -878,16 +1041,95 @@ impl App {
         }
     }
 
-    /// On a directory this folds the tree; everywhere else it is the fullscreen
-    /// diff, as lazygit does with Enter on a folder.
+    /// On a directory this folds the tree, on a changelist it opens what the
+    /// changelist holds, and everywhere else it is the fullscreen diff. This is
+    /// what Enter does in lazygit.
     fn toggle_fullscreen(&mut self) {
-        if self.focus == Panel::Files && matches!(self.selected_row(), Some(FileRow::Dir { .. })) {
+        if matches!(self.cursor_row(), Some(FileRow::Dir { .. })) {
             self.toggle_collapse(None);
             return;
+        }
+        match self.focus {
+            Panel::Changelists => {
+                self.step_into_files();
+                return;
+            }
+            // Already open: Enter is the fullscreen diff again.
+            Panel::History if self.history_open.is_none() => {
+                self.open_submitted_change();
+                return;
+            }
+            _ => {}
         }
         self.diff_fullscreen = !self.diff_fullscreen;
         if self.diff_fullscreen {
             self.focus = Panel::Diff;
+        }
+    }
+
+    /// Step down from Changelists into the Files panel, which is already
+    /// showing what the selected changelist holds.
+    fn step_into_files(&mut self) {
+        if self.selected_change().is_none() {
+            self.error = Some("select a changelist to see its files".into());
+            return;
+        }
+        self.diff_source = Panel::Files;
+        self.focus = Panel::Files;
+    }
+
+    /// Open the submitted change under the History cursor in place: the panel
+    /// becomes that change's file tree, and `Esc` goes back to the list.
+    ///
+    /// The Files panel is left where it is. It follows Changelists, and a
+    /// submitted change has nothing to do with the work in progress there.
+    fn open_submitted_change(&mut self) {
+        let Some(cl) = self.selected_submit() else {
+            self.error = Some("select a change to see its files".into());
+            return;
+        };
+        self.error = None;
+        self.diff_source = Panel::History;
+        self.diff_scroll = 0;
+        self.diff_hscroll = 0;
+
+        // Reopening the same change: a submitted change never moves, so what
+        // was loaded before still stands.
+        if self.history_open.as_ref().is_some_and(|o| o.change == cl.id) {
+            return;
+        }
+        self.history_open = Some(OpenChange {
+            change: cl.id,
+            files: Vec::new(),
+            loaded: false,
+            sel: 0,
+            diffs: Vec::new(),
+            diffs_loaded: false,
+        });
+        self.busy = true;
+        self.worker.send(Request::LoadFiles {
+            change: cl.id,
+            status: cl.status,
+            shelved: false,
+        });
+    }
+
+    /// Point the Diff panel at the file tree that just took focus. Focus on a
+    /// list, or on the diff itself, leaves it where it was.
+    fn point_diff_at_focus(&mut self) {
+        match self.focus {
+            Panel::Files => self.diff_source = Panel::Files,
+            Panel::History if self.history_open.is_some() => self.diff_source = Panel::History,
+            _ => {}
+        }
+    }
+
+    /// The row under the cursor in whichever file tree has focus.
+    fn cursor_row(&self) -> Option<FileRow<'_>> {
+        match self.focus {
+            Panel::Files => self.selected_row(),
+            Panel::History => self.opened_row(),
+            _ => None,
         }
     }
 
@@ -897,7 +1139,17 @@ impl App {
             self.select_anchor = None;
         } else if self.diff_fullscreen {
             self.diff_fullscreen = false;
+        } else if self.browsing_opened() {
+            self.close_opened_change();
         }
+    }
+
+    /// Back to the list of submitted changes.
+    fn close_opened_change(&mut self) {
+        self.history_open = None;
+        self.diff_source = Panel::Files;
+        self.diff_scroll = 0;
+        self.diff_hscroll = 0;
     }
 
     /// What moving left or right means, which is not the same in every panel.
@@ -907,8 +1159,9 @@ impl App {
             // sideways.
             Panel::Diff if by < 0 => self.diff_hscroll = self.diff_hscroll.saturating_sub(8),
             Panel::Diff => self.diff_hscroll += 8,
-            // Tree navigation, which only the Files panel has.
+            // Tree navigation, which only the two file trees have.
             Panel::Files => self.toggle_collapse(Some(by < 0)),
+            Panel::History if self.history_open.is_some() => self.toggle_collapse(Some(by < 0)),
             _ => {}
         }
     }
@@ -1137,7 +1390,7 @@ impl App {
 
     /// Copy the selected changelist's open files to the server as a shelf.
     fn shelve_changelist(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if cl.status == ChangeStatus::Submitted || cl.id == ChangeId::Default {
@@ -1173,7 +1426,7 @@ impl App {
 
     /// Shelve only the file or directory under the cursor.
     fn shelve_selected_files(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if cl.status == ChangeStatus::Submitted || cl.id == ChangeId::Default {
@@ -1195,7 +1448,7 @@ impl App {
 
     /// Open a shelf's files in another changelist, leaving the shelf alone.
     fn unshelve_changelist(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if !cl.shelved {
@@ -1212,7 +1465,7 @@ impl App {
 
     /// Throw away a shelf.
     fn delete_shelf(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if !cl.shelved {
@@ -1235,7 +1488,7 @@ impl App {
     /// Nothing reaches the depot: the reversal lands in a pending changelist
     /// to be reviewed and submitted like any other work.
     fn undo_change(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if cl.status != ChangeStatus::Submitted {
@@ -1265,7 +1518,7 @@ impl App {
 
     /// Show every revision of the file under the cursor.
     fn show_history(&mut self) {
-        let Some(file) = self.selected_file() else {
+        let Some(file) = self.browsed_file() else {
             self.error = Some("select a file to see its history".into());
             return;
         };
@@ -1328,7 +1581,7 @@ impl App {
 
     /// Show who last wrote each line of the file under the cursor.
     fn show_blame(&mut self) {
-        let Some(file) = self.selected_file() else {
+        let Some(file) = self.browsed_file() else {
             self.error = Some("select a file to blame it".into());
             return;
         };
@@ -1401,7 +1654,7 @@ impl App {
 
     /// Submit the selected changelist.
     fn submit_changelist(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if cl.status == ChangeStatus::Submitted {
@@ -1481,7 +1734,7 @@ impl App {
         if files.is_empty() {
             return;
         }
-        if self.selected_change().is_some_and(|cl| cl.status == ChangeStatus::Submitted) {
+        if self.focused_change().is_some_and(|cl| cl.status == ChangeStatus::Submitted) {
             self.error = Some("a submitted changelist cannot be reverted".into());
             return;
         }
@@ -1541,7 +1794,7 @@ impl App {
     /// Delete the selected changelist, which Perforce allows only once it is
     /// empty.
     fn delete_changelist(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if cl.id == ChangeId::Default {
@@ -1585,7 +1838,7 @@ impl App {
 
     /// Open the description of the selected changelist for editing.
     fn edit_description(&mut self) {
-        let Some(cl) = self.selected_change() else {
+        let Some(cl) = self.focused_change() else {
             return;
         };
         if cl.id == ChangeId::Default {
@@ -1667,13 +1920,11 @@ impl App {
                 FileRow::File { index, .. } => wanted.push(index),
                 FileRow::Dir { group, path, .. } => {
                     let prefix = format!("{path}/");
-                    let offset = match group {
-                        Group::InChange => 0,
-                        Group::Loose => self.files.len(),
-                    };
-                    let source = match group {
-                        Group::InChange => &self.files,
-                        Group::Loose => &self.loose_files,
+                    let (offset, source) = match group {
+                        Group::InChange => (0, &self.files),
+                        Group::Loose => (self.files.len(), &self.loose_files),
+                        // Not a row of this tree: a submitted change is read only.
+                        Group::Opened => continue,
                     };
                     wanted.extend(
                         source
@@ -1733,7 +1984,7 @@ impl App {
             path,
             collapsed,
             ..
-        }) = self.selected_row()
+        }) = self.cursor_row()
         else {
             return;
         };
@@ -1745,7 +1996,14 @@ impl App {
             self.collapsed.remove(&key);
         }
         // Rows above the cursor never move, so the selection stays put.
-        self.file_sel = self.file_sel.min(self.selectable_count().saturating_sub(1));
+        if self.browsing_opened() {
+            let last = self.opened_selectable_count().saturating_sub(1);
+            if let Some(open) = self.history_open.as_mut() {
+                open.sel = open.sel.min(last);
+            }
+        } else {
+            self.file_sel = self.file_sel.min(self.selectable_count().saturating_sub(1));
+        }
     }
 
     fn move_selected_file(&mut self) {
@@ -1767,10 +2025,6 @@ impl App {
             return;
         };
 
-        if cl.status == ChangeStatus::Submitted {
-            self.error = Some("a submitted changelist cannot be changed".into());
-            return;
-        }
         // Looking at the default changelist, there is no second group and so no
         // implied destination: ask which changelist to move into.
         if cl.id == ChangeId::Default {
@@ -1861,7 +2115,6 @@ impl App {
         }
         self.tab = self.tab.step(by);
         self.change_sel = 0;
-        self.change_source = Panel::Changelists;
         self.follow_selection();
     }
 
@@ -1873,7 +2126,10 @@ impl App {
         let (sel, len) = match self.focus {
             Panel::Files => (self.file_sel, self.selectable_count()),
             Panel::Changelists => (self.change_sel, self.tab_changes().len()),
-            Panel::History => (self.history_sel, self.visible_submitted().len()),
+            Panel::History => match &self.history_open {
+                Some(open) => (open.sel, self.opened_selectable_count()),
+                None => (self.history_sel, self.visible_submitted().len()),
+            },
             Panel::Status | Panel::Diff => return,
         };
         if len == 0 {
@@ -1892,6 +2148,7 @@ impl App {
         let len = match self.focus {
             Panel::Files => self.selectable_count(),
             Panel::Changelists => self.tab_changes().len(),
+            Panel::History if self.history_open.is_some() => self.opened_selectable_count(),
             Panel::History => self.visible_submitted().len(),
             Panel::Status | Panel::Diff => return,
         };
@@ -1904,27 +2161,31 @@ impl App {
     fn set_selection(&mut self, index: usize) {
         match self.focus {
             Panel::Files => {
-                if self.file_sel != index {
+                if self.file_sel != index || self.diff_source != Panel::Files {
                     self.file_sel = index;
+                    self.diff_source = Panel::Files;
                     // The pane shows one file at a time, so its scroll is per file.
                     self.diff_scroll = 0;
                     self.diff_hscroll = 0;
                 }
             }
             Panel::Changelists => {
-                if self.change_sel != index || self.change_source != Panel::Changelists {
+                if self.change_sel != index {
                     self.change_sel = index;
-                    self.change_source = Panel::Changelists;
                     self.follow_selection();
                 }
             }
-            Panel::History => {
-                if self.history_sel != index || self.change_source != Panel::History {
-                    self.history_sel = index;
-                    self.change_source = Panel::History;
-                    self.follow_selection();
+            Panel::History => match self.history_open.as_mut() {
+                Some(open) => {
+                    if open.sel != index || self.diff_source != Panel::History {
+                        open.sel = index;
+                        self.diff_source = Panel::History;
+                        self.diff_scroll = 0;
+                        self.diff_hscroll = 0;
+                    }
                 }
-            }
+                None => self.history_sel = index,
+            },
             Panel::Status | Panel::Diff => {}
         }
     }
@@ -1936,6 +2197,10 @@ impl App {
         self.history_sel = self
             .history_sel
             .min(self.visible_submitted().len().saturating_sub(1));
+        // Nothing left to be open on.
+        if self.submitted.is_empty() {
+            self.close_opened_change();
+        }
     }
 
     /// Point the Files panel at whichever changelist is now selected.
@@ -1966,6 +2231,22 @@ impl App {
             change: cl.id,
             status: cl.status,
             shelved: cl.shelved,
+        });
+    }
+
+    /// Ask for the opened change's diffs. `describe -du` renders them against
+    /// the revision before the change, which is what a reader wants here.
+    fn request_opened_diff(&mut self) {
+        let Some(open) = &self.history_open else {
+            return;
+        };
+        let (change, files) = (open.change, open.files.clone());
+        self.busy = true;
+        self.worker.send(Request::LoadDiff {
+            change,
+            status: ChangeStatus::Submitted,
+            shelved: false,
+            files,
         });
     }
 

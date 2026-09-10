@@ -18,8 +18,8 @@ bar show what is actually bound rather than what shipped.
 | `/` | narrow the focused list — `Enter` keeps it, `Esc` clears it |
 | `+` `_` | give the focused panel most of the column, and back |
 | `h` `l`, `←` `→` | fold a directory (Files), scroll sideways (Diff) |
-| `Enter` | fold a directory, else give the diff the whole window |
-| `Esc` | back out — a range, then fullscreen |
+| `Enter` | open a change, fold a directory, else give the diff the whole window |
+| `Esc` | back out — a range, then fullscreen, then an opened change |
 
 ## Files
 

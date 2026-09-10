@@ -83,6 +83,10 @@ fn app_with(config: Config) -> App {
     app
 }
 
+fn paths(files: &[FileEntry]) -> Vec<String> {
+    files.iter().map(|f| f.depot_path.clone()).collect()
+}
+
 fn change(n: u32, client: &str, status: ChangeStatus, shelved: bool, desc: &str) -> Changelist {
     Changelist {
         id: ChangeId::Number(n),
@@ -359,16 +363,156 @@ fn the_tab_bar_shows_counts_and_marks_the_open_tab() {
 }
 
 #[test]
-fn selecting_in_history_repoints_the_files_panel() {
+fn browsing_history_leaves_the_files_panel_alone() {
     let mut app = app();
-    assert_eq!(app.selected_change().unwrap().id, ChangeId::Number(395));
+    let before = paths(&app.files);
 
     app.focus = Panel::History;
+    app.last_request();
     press(&mut app, KeyCode::Char('g'));
 
-    assert_eq!(app.selected_change().unwrap().id, ChangeId::Number(396));
-    // The old changelist's files must not linger under the new heading.
-    assert!(app.files.is_empty());
+    // Files follows the Changelists selection and nothing else.
+    assert_eq!(app.selected_change().unwrap().id, ChangeId::Number(395));
+    assert_eq!(paths(&app.files), before, "its files are not reloaded");
+    assert!(app.last_request().is_none(), "and nothing was asked for");
+}
+
+/// The History panel opened on the one submitted change in the fixture, with
+/// its files in.
+fn opened_history() -> App {
+    let mut app = app();
+    app.focus = Panel::History;
+    app.last_request(); // discard the setup traffic
+
+    press(&mut app, KeyCode::Enter);
+    app.handle(Event::Files {
+        change: ChangeId::Number(396),
+        files: vec![
+            file("//depot/main/Source/Core/Door.cpp", FileAction::Edit, false),
+            file("//depot/main/.p4ignore", FileAction::Edit, false),
+        ],
+        default_files: Vec::new(),
+    });
+    app
+}
+
+#[test]
+fn enter_in_history_opens_the_files_of_that_change() {
+    let mut app = app();
+    app.focus = Panel::History;
+    app.last_request(); // discard the setup traffic
+
+    press(&mut app, KeyCode::Enter);
+
+    assert!(
+        app.history_open.is_some(),
+        "the panel is now the change's file tree"
+    );
+    assert_eq!(app.focus, Panel::History, "which is browsed where it is");
+    assert!(!app.diff_fullscreen, "and Enter is not the fullscreen key here");
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::LoadFiles {
+            change: ChangeId::Number(396),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn an_opened_change_leaves_the_files_panel_where_it_is() {
+    let app = opened_history();
+
+    assert_eq!(app.selected_change().unwrap().id, ChangeId::Number(395));
+    assert_eq!(
+        paths(&app.files),
+        ["//depot/main/AGENTS.md", "//depot/main/Foo.cpp"],
+        "Files still holds the changelist selected in Changelists"
+    );
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("Files of 395"), "{out}");
+    assert!(out.contains("History of 396"), "{out}");
+}
+
+#[test]
+fn the_diff_pane_follows_whichever_tree_is_browsed() {
+    let mut app = opened_history();
+    app.handle(Event::Diff {
+        change: ChangeId::Number(396),
+        files: vec![FileDiff {
+            depot_path: "//depot/main/.p4ignore".into(),
+            rev: Some(7),
+            hunks: "@@ -1,2 +1,2 @@\n-before\n+submitted\n".into(),
+        }],
+    });
+    press(&mut app, KeyCode::Char('G')); // .p4ignore, last in the tree
+    assert!(render(&app, 120, 40).contains("+submitted"));
+
+    // Back to the Files panel, and the diff is the changelist's again.
+    press(&mut app, KeyCode::Char('2'));
+    let out = render(&app, 120, 40);
+    assert!(!out.contains("+submitted"), "{out}");
+}
+
+#[test]
+fn an_opened_change_shows_its_files_in_the_history_panel() {
+    let app = opened_history();
+    let out = render(&app, 120, 40);
+
+    assert!(out.contains("History of 396"), "the title says which\n{out}");
+    assert!(out.contains(".p4ignore"), "{out}");
+    // The list of changes has given up the panel.
+    assert!(!out.contains("# Updated .p4ignore"), "{out}");
+}
+
+#[test]
+fn browsing_an_opened_change_moves_through_its_files() {
+    let mut app = opened_history();
+    // Source/, Core/, Door.cpp, then .p4ignore: directories come first.
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('j'));
+
+    assert_eq!(
+        app.browsed_file().map(|f| f.depot_path.clone()),
+        Some("//depot/main/Source/Core/Door.cpp".into()),
+        "the cursor walks the tree, not the list of changes"
+    );
+    assert_eq!(app.history_sel, 0, "the change under it does not move");
+
+    // `describe -du` diffs a submitted change against what came before it, so
+    // the pane follows the cursor with the parent's diff.
+    app.handle(Event::Diff {
+        change: ChangeId::Number(396),
+        files: vec![FileDiff {
+            depot_path: "//depot/main/Source/Core/Door.cpp".into(),
+            rev: Some(12),
+            hunks: "@@ -1,2 +1,2 @@\n-before\n+after\n".into(),
+        }],
+    });
+    assert!(render(&app, 120, 40).contains("+after"));
+}
+
+#[test]
+fn esc_closes_an_opened_change_and_shows_the_list_again() {
+    let mut app = opened_history();
+    press(&mut app, KeyCode::Esc);
+
+    assert!(app.history_open.is_none());
+    assert!(render(&app, 120, 40).contains("# Updated .p4ignore"));
+}
+
+#[test]
+fn enter_in_the_changelist_panel_opens_its_files_too() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.last_request();
+
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(app.focus, Panel::Files);
+    assert_eq!(app.selected_change().unwrap().id, ChangeId::Number(395));
+    assert!(!app.diff_fullscreen);
 }
 
 #[test]
@@ -2010,9 +2154,9 @@ fn the_default_and_submitted_changelists_cannot_be_deleted() {
     assert!(app.confirm.is_none());
     assert!(app.error.as_deref().is_some_and(|e| e.contains("default")));
 
+    // A submitted change is only reachable from History.
     app.focus = Panel::History;
     press(&mut app, KeyCode::Char('g'));
-    app.focus = Panel::Changelists;
     press(&mut app, KeyCode::Char('d'));
     assert!(app.confirm.is_none());
     assert!(app.error.as_deref().is_some_and(|e| e.contains("submitted")));
@@ -2063,21 +2207,23 @@ fn abandoning_the_new_changelist_description_creates_nothing() {
 }
 
 #[test]
-fn space_refuses_to_edit_a_submitted_changelist() {
-    let mut app = app();
-    app.focus = Panel::History;
-    press(&mut app, KeyCode::Char('g'));
-    app.handle(Event::Files {
-        change: ChangeId::Number(396),
-        files: vec![file("//depot/main/.p4ignore", FileAction::Edit, false)],
-        default_files: Vec::new(),
-    });
-
-    app.focus = Panel::Files;
+fn an_opened_change_cannot_be_edited() {
+    let mut app = opened_history();
     app.last_request(); // discard the setup traffic
-    press(&mut app, KeyCode::Char(' '));
 
+    // Nothing in a submitted change can be moved, reverted or shelved.
+    press(&mut app, KeyCode::Char(' '));
     assert!(app.last_request().is_none());
+
+    press(&mut app, KeyCode::Char('s'));
+    assert!(app.last_request().is_none());
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("pending changelist")));
+
+    press(&mut app, KeyCode::Char('d'));
+    assert!(app.confirm.is_none());
     assert!(app
         .error
         .as_deref()
