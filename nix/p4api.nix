@@ -92,6 +92,13 @@ stdenv.mkDerivation {
     runHook postInstall
   '';
 
+  # The whole table, not just this system's row. The update script rewrites
+  # hashes from it, and the drift check compares it against build.rs.
+  passthru = {
+    inherit release srcs;
+    baseUrl = "https://ftp.perforce.com/perforce/${release}";
+  };
+
   meta = {
     description = "Helix Core C++ API";
     homepage = "https://www.perforce.com";

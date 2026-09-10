@@ -84,15 +84,32 @@ A Nix build has no network access, so the flake must download the P4API before
 the build starts. To do that, it must know the hash of the archive. Perforce
 replaces these archives in place, so the hash becomes wrong from time to time.
 
-If `nix build` reports a hash mismatch, get the correct hash:
+If `nix build` reports a hash mismatch, refresh the hashes:
 
 ```sh
-nix store prefetch-file --json <url>
+nix run .#update-p4api
 ```
 
-Put the new hash in `nix/p4api.nix`, which also holds the URL. The
-`nix develop` shell keeps working while the hash is wrong, because it can use
+Run it from the repository root. It downloads each archive again and writes the
+new hash into `nix/p4api.nix`. It changes only hashes, never a URL. Name one or
+more systems to do fewer, because all four together are about 250 MB:
+
+```sh
+nix run .#update-p4api -- x86_64-linux
+```
+
+The `nix develop` shell keeps working while a hash is wrong, because it can use
 any unpacked distribution.
+
+### If you change the P4API release
+
+The release and the archive names are in two places: `distribution()` in
+`crates/p4-sys/build.rs`, which cargo uses, and `nix/p4api.nix`, which Nix
+uses. Nothing makes the two agree.
+
+Change both, or `nix build` keeps building the P4API that cargo no longer uses.
+The `p4api-drift` check compares them and fails if they disagree, so
+`nix flake check` tells you. Then run `nix run .#update-p4api`.
 
 ## If you would rather supply them yourself
 
