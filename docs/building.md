@@ -52,6 +52,48 @@ The first build takes a few minutes for the download and a few more for
 OpenSSL. Both are cached — the P4API under `%LOCALAPPDATA%\lazyp4\p4api` or
 `~/.cache/lazyp4/p4api`, which survives `cargo clean`.
 
+## Building with Nix
+
+The repository has a flake. For a shell that holds Rust, a C++ toolchain and
+the two libraries the build links:
+
+```sh
+nix develop
+```
+
+In that shell, `cargo build` downloads nothing and compiles no OpenSSL. The
+flake sets `P4API_DIR` and `OPENSSL_LIB_DIR` for you, from a P4API it fetched
+in advance and the OpenSSL in nixpkgs. See [If you would rather supply them
+yourself](#if-you-would-rather-supply-them-yourself) for what those variables
+do.
+
+To build the binary, or to build and test as CI does:
+
+```sh
+nix build
+nix flake check
+```
+
+The flake supports `x86_64-linux`, `aarch64-linux` and `aarch64-darwin`.
+Nixpkgs 26.11 dropped `x86_64-darwin`. For that platform, pin the nixpkgs
+input to 26.05.
+
+### If the P4API hash does not match
+
+A Nix build has no network access, so the flake must download the P4API before
+the build starts. To do that, it must know the hash of the archive. Perforce
+replaces these archives in place, so the hash becomes wrong from time to time.
+
+If `nix build` reports a hash mismatch, get the correct hash:
+
+```sh
+nix store prefetch-file --json <url>
+```
+
+Put the new hash in `nix/p4api.nix`, which also holds the URL. The
+`nix develop` shell keeps working while the hash is wrong, because it can use
+any unpacked distribution.
+
 ## If you would rather supply them yourself
 
 Any of these turns the matching step off. Put them in the `[env]` table of your
