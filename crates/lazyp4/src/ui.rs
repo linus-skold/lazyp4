@@ -1385,7 +1385,7 @@ fn field<'a>(t: &Theme, name: &'a str, value: &str) -> Line<'a> {
 fn selection_style(t: &Theme, focused: bool) -> Style {
     let base = Style::default().add_modifier(Modifier::BOLD);
     if focused {
-        base.bg(t.idle).fg(t.text)
+        base.bg(t.selection).fg(t.text)
     } else {
         base
     }
