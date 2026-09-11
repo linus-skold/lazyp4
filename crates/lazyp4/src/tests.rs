@@ -280,6 +280,33 @@ fn brackets_do_not_move_focus_between_panels() {
 }
 
 #[test]
+fn an_empty_changelist_tab_does_not_claim_to_be_loading() {
+    let mut app = app();
+    let submitted = app.submitted.clone();
+    app.handle(Event::Changes {
+        pending: Vec::new(),
+        submitted,
+    });
+
+    assert!(app.selected_change().is_none());
+    let out = render(&app, 120, 40);
+    assert!(out.contains("no changelist selected"), "{out}");
+    assert!(!out.contains("loading…"), "{out}");
+}
+
+#[test]
+fn files_claim_to_be_loading_while_a_selected_change_is_pending() {
+    let mut app = app();
+    app.files.clear();
+    app.loose_files.clear();
+    app.files_for = None;
+
+    assert!(app.selected_change().is_some());
+    let out = render(&app, 120, 40);
+    assert!(out.contains("loading…"), "{out}");
+}
+
+#[test]
 fn tabs_partition_pending_changelists() {
     let app = app();
     // default, 395 and 308 are on this workspace and unshelved; 166 is

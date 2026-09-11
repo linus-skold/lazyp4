@@ -778,7 +778,9 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         Panel::Files,
         app.selected_change().map(|cl| format!("of {}", cl.id)),
     );
-    let empty = if app.files_for.is_none() {
+    let empty = if app.selected_change().is_none() {
+        "no changelist selected"
+    } else if app.files_for.is_none() {
         "loading…"
     } else if app.scanning {
         "scanning the workspace…"
