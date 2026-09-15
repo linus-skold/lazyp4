@@ -84,8 +84,11 @@ jobs:
 
       # No target cache here. A release is rare, and building OpenSSL from
       # source rather than restoring it is the more trustworthy of the two.
+      #
+      # The default shell, not bash: on Windows, Git Bash puts Git's own Perl
+      # first on PATH, and that Perl lacks the modules OpenSSL's Configure
+      # needs. pwsh finds the runner's Strawberry Perl, as in ci.yml.
       - name: Build
-        shell: bash
         env:
           P4API_CACHE_DIR: ${{ github.workspace }}/.p4api
         run: cargo build --release --target ${{ matrix.target }} -p lazyp4
