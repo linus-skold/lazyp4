@@ -8,9 +8,7 @@ use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use crate::app::{
-    has_description, ignore_entry, App, ChangeTab, Destination, FileRow, Modal, Panel,
-};
+use crate::app::{App, ChangeTab, Destination, FileRow, Modal, Panel};
 use crate::config::Config;
 use crate::ui;
 use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
@@ -1964,11 +1962,7 @@ fn c_submits_after_confirming_and_listing_the_files() {
 
 #[test]
 fn a_changelist_without_a_real_description_is_not_submitted() {
-    // Perforce writes `<saved by Perforce>` itself; it is not a message.
-    assert!(!has_description("<saved by Perforce>"));
-    assert!(!has_description("   "));
-    assert!(has_description("# Do not submit"));
-
+    // The description test itself lives in `crate::text`.
     let mut app = app();
     app.focus = Panel::Changelists;
     press(&mut app, KeyCode::Char(']')); // the Shelved tab holds 166
@@ -2533,40 +2527,6 @@ fn nothing_is_polled_while_a_question_is_open() {
         app.last_request().is_none(),
         "the ground must not move under a decision"
     );
-}
-
-#[test]
-fn an_ignore_pattern_is_the_path_below_the_workspace_root() {
-    let (file, pattern) =
-        ignore_entry("E:\\ws", ".p4ignore", "E:\\ws\\Content\\Big.uasset").unwrap();
-    assert_eq!(file, "E:/ws/.p4ignore");
-    assert_eq!(pattern, "Content/Big.uasset");
-
-    // Windows spells the same path in several cases.
-    assert_eq!(
-        ignore_entry("E:\\WS", ".p4ignore", "e:\\ws\\A.txt").unwrap().1,
-        "A.txt"
-    );
-    // A trailing separator on the root must not double up.
-    assert_eq!(
-        ignore_entry("E:/ws/", ".p4ignore", "E:/ws/A.txt").unwrap().0,
-        "E:/ws/.p4ignore"
-    );
-    // P4IGNORE may name a path rather than a file. What counts as absolute is
-    // the platform's own business — a drive letter means nothing on Unix — so
-    // this asks with a path that is absolute wherever the test is running.
-    let elsewhere = if cfg!(windows) {
-        "D:/shared/ignore.txt"
-    } else {
-        "/shared/ignore.txt"
-    };
-    assert_eq!(
-        ignore_entry("E:/ws", elsewhere, "E:/ws/A.txt").unwrap().0,
-        elsewhere
-    );
-    // Outside the workspace there is no pattern to write.
-    assert!(ignore_entry("E:/ws", ".p4ignore", "C:/elsewhere/A.txt").is_none());
-    assert!(ignore_entry("E:/ws", ".p4ignore", "E:/wsx/A.txt").is_none());
 }
 
 #[test]

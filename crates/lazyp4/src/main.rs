@@ -4,8 +4,10 @@ mod app;
 mod config;
 mod diffview;
 mod editor;
+mod ignore;
 #[cfg(test)]
 mod tests;
+mod text;
 mod tree;
 mod ui;
 mod worker;

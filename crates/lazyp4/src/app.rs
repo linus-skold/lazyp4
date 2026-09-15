@@ -10,6 +10,8 @@ use p4::{
 
 use crate::config::{Action, Config, Key};
 use crate::editor::{Editor, Outcome};
+use crate::ignore;
+use crate::text;
 use crate::tree;
 use crate::worker::{Event, FileEntry, PostCreate, Request, Worker};
 
@@ -448,17 +450,11 @@ impl App {
         self.filters.get(&panel).map(String::as_str).unwrap_or("")
     }
 
-    /// Case-insensitive substring match, which is what `/` is for: narrowing a
-    /// long list quickly, not writing a pattern.
-    fn matches(filter: &str, haystack: &str) -> bool {
-        filter.is_empty() || haystack.to_lowercase().contains(&filter.to_lowercase())
-    }
-
     fn changelist_matches(&self, panel: Panel, cl: &Changelist) -> bool {
         let filter = self.filter(panel);
-        Self::matches(filter, &cl.id.to_string())
-            || Self::matches(filter, &cl.user)
-            || Self::matches(filter, &cl.description)
+        text::matches(filter, &cl.id.to_string())
+            || text::matches(filter, &cl.user)
+            || text::matches(filter, &cl.description)
     }
 
     /// Pending changelists shown by the current tab, after any filter.
@@ -576,7 +572,7 @@ impl App {
             let entries: Vec<tree::Entry> = files
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| Self::matches(filter, &f.depot_path))
+                .filter(|(_, f)| text::matches(filter, &f.depot_path))
                 .map(|(i, f)| tree::Entry {
                     index: offset + i,
                     path: tree::relative(&f.depot_path, &root),
@@ -1642,7 +1638,7 @@ impl App {
         // P4IGNORE can also be set in a P4CONFIG file, which lazyp4 cannot
         // read; the default is what Perforce itself falls back to.
         let name = std::env::var("P4IGNORE").unwrap_or_else(|_| ".p4ignore".to_owned());
-        let Some((file, pattern)) = ignore_entry(&root, &name, &local) else {
+        let Some((file, pattern)) = ignore::entry(&root, &name, &local) else {
             self.error = Some("that file is outside the workspace".into());
             return;
         };
@@ -1717,7 +1713,7 @@ impl App {
         self.ask(
             format!("Undo revision #{} of {name}?", rev.rev),
             vec![
-                format!("change {}: {}", rev.change, first_line(&rev.description)),
+                format!("change {}: {}", rev.change, text::first_line(&rev.description)),
                 String::new(),
                 format!("Opens the reversal of {spec} in a new changelist."),
                 "Nothing is submitted until you submit it.".to_owned(),
@@ -1758,7 +1754,7 @@ impl App {
             self.error = Some(self.not_here(&cl).into());
             return;
         }
-        if !has_description(&cl.description) {
+        if !text::has_description(&cl.description) {
             self.error = Some("give the changelist a description first (e)".into());
             return;
         }
@@ -2361,45 +2357,11 @@ impl App {
     }
 }
 
-/// Whether a description says anything.
-///
-/// Perforce writes `<saved by Perforce>` itself when it shelves work into a
-/// changelist you never described, so that placeholder counts as empty.
 /// The depot a stream lives in, as a filespec: `//depot/main` gives
 /// `//depot/...`. Nothing for a client with no stream.
 fn depot_of(stream: &str) -> Option<String> {
     let depot = stream.strip_prefix("//")?.split('/').next()?;
     (!depot.is_empty()).then(|| format!("//{depot}/..."))
-}
-
-pub fn has_description(description: &str) -> bool {
-    let text = description.trim();
-    !text.is_empty() && text != "<saved by Perforce>"
-}
-
-/// Where the ignore file lives, and the pattern that names `local` inside it.
-///
-/// `P4IGNORE` may be a bare file name, which Perforce looks for from each
-/// file's directory upwards, or a path. lazyp4 writes to the one in the
-/// workspace root, which is where a shared ignore file belongs. `None` when the
-/// file is not inside the workspace at all.
-pub fn ignore_entry(root: &str, name: &str, local: &str) -> Option<(String, String)> {
-    let slashes = |s: &str| s.replace('\\', "/");
-    let file = if std::path::Path::new(name).is_absolute() {
-        slashes(name)
-    } else {
-        format!("{}/{name}", slashes(root).trim_end_matches('/'))
-    };
-
-    let root = slashes(root);
-    let root = root.trim_end_matches('/');
-    let local = slashes(local);
-    // Windows spells the same path in several cases, so compare loosely.
-    let head = local.get(..root.len())?;
-    if !head.eq_ignore_ascii_case(root) || local.as_bytes().get(root.len()) != Some(&b'/') {
-        return None;
-    }
-    Some((file, local[root.len() + 1..].to_owned()))
 }
 
 /// Move a cursor within `count` rows the way a navigation action says.
@@ -2415,11 +2377,6 @@ fn step(sel: usize, count: usize, action: Action) -> usize {
         Action::Last => last.max(0) as usize,
         _ => sel,
     }
-}
-
-/// First line of a description, for a one-line entry.
-fn first_line(description: &str) -> &str {
-    description.lines().next().unwrap_or_default().trim_end()
 }
 
 /// Marker shown beside a changelist in a list.

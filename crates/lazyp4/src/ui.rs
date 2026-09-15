@@ -12,6 +12,7 @@ use crate::app::{change_marker, App, ChangeTab, Confirm, Destination, FileRow, M
 use crate::config::{Action, Group, Keymap, Theme};
 use crate::diffview::{self, Row, RowKind};
 use crate::editor::Editor;
+use crate::text::short_path;
 use crate::worker::FileEntry;
 
 /// Braille frames, which turn in place rather than shifting the text after them.
@@ -1105,11 +1106,6 @@ fn diff_line(t: &Theme, row: &Row, width: usize, hscroll: usize) -> Line<'static
     }
 
     Line::from(spans)
-}
-
-/// Depot paths are long and share a prefix; the tail is what identifies them.
-fn short_path(depot_path: &str) -> &str {
-    depot_path.trim_start_matches('/')
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
