@@ -12,11 +12,35 @@ bottom](example-lazyp4.png)
 
 ## Install
 
-Take the archive for your platform from
-[Releases](https://github.com/linus-skold/lazyp4/releases) and put the binary on
-your `PATH`. The P4API, OpenSSL and — on Windows — the C runtime are all linked
-statically, so it is one file: no DLLs, no redistributable, nothing else to
-install.
+You do not need Rust. On Linux or macOS (Apple Silicon):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/linus-skold/lazyp4/main/scripts/install.sh | sh
+```
+
+On Windows:
+
+```powershell
+irm https://raw.githubusercontent.com/linus-skold/lazyp4/main/scripts/install.ps1 | iex
+```
+
+The script downloads the latest release, checks it against `SHA256SUMS`, and
+puts the binary in `~/.local/bin` or `%LOCALAPPDATA%\Programs\lazyp4`. On
+Windows it also adds that directory to your user `PATH`. To install a specific
+release, set `LAZYP4_VERSION` (for example `v0.2.0`). To use a different
+directory, set `LAZYP4_INSTALL_DIR`.
+
+On Debian, Ubuntu, Fedora or RHEL, you can install the `.deb` or `.rpm` from
+[Releases](https://github.com/linus-skold/lazyp4/releases) instead:
+
+```sh
+sudo apt install ./lazyp4_0.2.0_amd64.deb
+sudo dnf install ./lazyp4-0.2.0-1.x86_64.rpm
+```
+
+The Linux build needs glibc 2.35 or later. The P4API, OpenSSL and — on
+Windows — the C runtime are all linked statically, so it is one file: no DLLs,
+no redistributable, nothing else to install.
 
 Or build it yourself, from the repository root:
 
@@ -52,6 +76,7 @@ After that lazyp4 stands on its own. Closing that gap is
 | [Keys](docs/keys.md) | Every key, by panel. `?` shows the same thing in the app |
 | [Configuration](docs/configuration.md) | Colours, keybindings and the diff tab width |
 | [Building](docs/building.md) | Building from source, and what the build script fetches |
+| [Releasing](docs/releasing.md) | How to make a release, and what it contains |
 | [Design](docs/design.md) | The crates, the worker thread, and where Perforce and git part company |
 
 ## Contributing
