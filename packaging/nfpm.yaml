@@ -1,0 +1,35 @@
+# The .deb and .rpm that release.yml builds from the binary it stages in dist/.
+# Run from the repository root with VERSION set.
+name: lazyp4
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: devel
+priority: optional
+maintainer: Linus Sköld
+description: A terminal UI for Perforce, in the style of lazygit
+homepage: https://github.com/linus-skold/lazyp4
+license: MIT
+
+contents:
+  - src: dist/lazyp4
+    dst: /usr/bin/lazyp4
+    file_info:
+      mode: 0755
+  - src: README.md
+    dst: /usr/share/doc/lazyp4/README.md
+    file_info:
+      mode: 0644
+
+# The P4API and OpenSSL are linked statically. The C and C++ runtimes are not
+# (see the link lines in crates/p4-sys/build.rs), and the glibc floor is the
+# one on the ubuntu-22.04 runner that builds it.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - libstdc++6
+  rpm:
+    depends:
+      - glibc >= 2.35
+      - libstdc++

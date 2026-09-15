@@ -8,13 +8,45 @@ on:
       tag:
         description: Tag to build and publish
         required: true
+  # prepare-release.yml calls this directly. A tag pushed with GITHUB_TOKEN
+  # starts no other workflow, so the push trigger above never fires for it.
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      # The binary takes its version from Cargo.toml. A tag that disagrees
+      # would publish packages named for one version that hold another.
+      - name: Compare the tag with Cargo.toml
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match version $version in Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -24,23 +56,21 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             binary: lazyp4.exe
+          # The oldest runner, not ubuntu-latest: the binary links glibc
+          # dynamically and needs at least the glibc it was built against.
           - name: lazyp4-linux-x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             binary: lazyp4
           - name: lazyp4-macos-arm64
             os: macos-latest
             target: aarch64-apple-darwin
             binary: lazyp4
-          - name: lazyp4-macos-x86_64
-            os: macos-13
-            target: x86_64-apple-darwin
-            binary: lazyp4
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,12 +105,31 @@ jobs:
             tar -czf "../${{ matrix.name }}.tar.gz" ./*
           fi
 
+      # The install scripts take the tarball; these are for people who would
+      # rather have the package manager own the file.
+      - name: Package .deb and .rpm
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          NFPM_VERSION: 2.47.0
+        run: |
+          archive="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/${archive}"
+          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/checksums.txt"
+          grep " ${archive}\$" checksums.txt | sha256sum -c -
+          tar -xzf "$archive" nfpm
+          ./nfpm package --config packaging/nfpm.yaml --packager deb --target .
+          ./nfpm package --config packaging/nfpm.yaml --packager rpm --target .
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: |
             ${{ matrix.name }}.zip
             ${{ matrix.name }}.tar.gz
+            *.deb
+            *.rpm
           if-no-files-found: error
 
   publish:
@@ -94,15 +143,18 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # The install scripts check their download against this file.
       - name: Checksums
         run: |
           cd artifacts
-          sha256sum * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
+      # A draft, so that nothing reaches /releases/latest — and so the install
+      # scripts — until someone has looked at it and published it.
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ env.TAG }}
           draft: true
           generate_release_notes: true
           files: artifacts/*

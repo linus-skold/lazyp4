@@ -161,7 +161,9 @@ through the typed command layer.
 push. Clippy runs on Linux only: it is a check-mode pass, so it shares no
 artifacts with the build and recompiles the graph — build script included, which
 means compiling OpenSSL a second time. `.github/workflows/release.yml` builds
-four targets on a `v*` tag and attaches the archives to a draft release.
+three targets on a `v*` tag, makes a `.deb` and an `.rpm` for Linux, and
+attaches them to a draft release. [Releasing](releasing.md) tells you how to
+start one.
 
 Both cache the P4API download. CI also caches `target` whole rather than using
 `Swatinem/rust-cache`, because OpenSSL is compiled into `p4-sys`'s `OUT_DIR` and
