@@ -1,0 +1,73 @@
+name: Prepare release
+
+# Sets the workspace version, commits that to main, tags the commit and builds
+# the release from the tag. The tag so names the commit that carries the
+# version, and the binary reports the version the tag says.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, without the v (for example 0.2.0)
+        required: true
+
+concurrency:
+  group: prepare-release
+
+jobs:
+  bump:
+    name: Bump and tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: v${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Set the version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a version such as 0.2.0"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists"
+            exit 1
+          fi
+          sed -i '/^\[workspace\.package\]/,/^\[/s/^version = ".*"/version = "'"$VERSION"'"/' Cargo.toml
+          # Rewrites the workspace members' entries in Cargo.lock, nothing else.
+          cargo update --workspace
+          git diff
+
+      # No commit when the version is already right, as for a first release
+      # of the version Cargo.toml started with.
+      - name: Commit, tag and push
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git commit -am "chore(release): v$VERSION"
+          fi
+          git tag -a "v$VERSION" -m "v$VERSION"
+          # Atomic: if main moved since checkout, neither the commit nor the
+          # tag lands.
+          git push --atomic origin HEAD:main "v$VERSION"
+
+  release:
+    needs: bump
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.bump.outputs.tag }}
