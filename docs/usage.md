@@ -1,6 +1,7 @@
 # Using lazyp4
 
-Panels run down the left, with the diff filling the right.
+Panels run down the left, with the diff filling the right and a small command
+log below it.
 
 | Key | Panel | Shows |
 | --- | --- | --- |
@@ -9,6 +10,12 @@ Panels run down the left, with the diff filling the right.
 | `3` | Changelists | pending changelists, in three tabs |
 | `4` | History | submits against this workspace |
 | `0` | Diff | the selected file's diff |
+| — | Log | the last few `p4` commands, and what came back |
+
+The Log pane takes no focus and holds the newest lines only. Each line says
+what it is: `p4` for a command, `!` for a failure, `✓` for something that went
+right. A failure stays there after the status bar shows something else. `x`
+opens the full log, which keeps the last 500 lines.
 
 `3` holds the pending work, split by where its content lives:
 

@@ -2871,24 +2871,45 @@ fn modals_open_and_close_without_quitting() {
 }
 
 #[test]
-fn the_command_log_lives_behind_the_help_sheet() {
+fn x_opens_the_command_log_and_closes_it_again() {
     let mut app = app();
     app.handle(Event::Log("changes -l -s pending".into()));
-
-    // No longer a key of its own.
-    press(&mut app, KeyCode::Char('x'));
-    assert_eq!(app.modal, Modal::None);
-
-    press(&mut app, KeyCode::Char('?'));
-    assert!(render(&app, 120, 40).contains("the p4 command log"), "help points at it");
 
     press(&mut app, KeyCode::Char('x'));
     assert_eq!(app.modal, Modal::Log);
     assert!(render(&app, 120, 40).contains("changes -l -s pending"));
 
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(app.modal, Modal::None, "the key that opens it closes it");
+}
+
+#[test]
+fn the_command_log_steps_back_to_the_help_sheet_it_was_opened_from() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('?'));
+    assert!(render(&app, 120, 40).contains("the p4 command log"), "help points at it");
+
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(app.modal, Modal::Log);
+
     // And back, rather than dumping you out of help entirely.
     press(&mut app, KeyCode::Char('x'));
     assert_eq!(app.modal, Modal::Help);
+}
+
+#[test]
+fn the_log_pane_keeps_a_failure_the_status_bar_has_already_dropped() {
+    let mut app = app();
+    app.handle(Event::Log("sync".into()));
+    app.handle(Event::Error("sync: cannot clobber writable file Foo.cpp".into()));
+    // The status bar holds one line, so the notice takes the error's place.
+    app.handle(Event::Notice("14 file(s) updated".into()));
+    assert!(app.error.is_none());
+
+    let out = render(&app, 120, 40);
+    assert!(out.contains("Log"), "the pane is drawn\n{out}");
+    assert!(out.contains("p4 sync"), "{out}");
+    assert!(out.contains("cannot clobber"), "the failure survives\n{out}");
 }
 
 #[test]

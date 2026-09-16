@@ -4,7 +4,9 @@
 if you have [rebound anything](configuration.md), the help sheet and the status
 bar show what is actually bound rather than what shipped.
 
-`x` from the help sheet opens the log of every command lazyp4 has run.
+`x` opens the log of every command lazyp4 has run. The Log pane under the diff
+shows the newest lines; the overlay holds the last 500. Opened from the help
+sheet, `x` steps back to it.
 
 ## Moving around
 

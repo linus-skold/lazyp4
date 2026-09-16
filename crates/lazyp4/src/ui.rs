@@ -8,7 +8,10 @@ use ratatui::Frame;
 
 use p4::{Changelist, FileAction};
 
-use crate::app::{change_marker, App, ChangeTab, Confirm, Destination, FileRow, Modal, Panel, Picker};
+use crate::app::{
+    change_marker, App, ChangeTab, Confirm, Destination, FileRow, LogKind, LogLine, Modal, Panel,
+    Picker,
+};
 use crate::config::{Action, Group, Keymap, Theme};
 use crate::diffview::{self, Row, RowKind};
 use crate::editor::Editor;
@@ -53,10 +56,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
     .areas(left);
 
     draw_status(frame, app, status);
+    // The log sits under the diff: four lines, fixed, so it says what is
+    // happening without taking room the diff can use as the window grows.
+    let [diff, log] = Layout::vertical([Constraint::Min(0), Constraint::Length(6)]).areas(right);
+
     draw_files(frame, app, files);
     draw_changes(frame, app, changes);
     draw_history(frame, app, history);
-    draw_diff(frame, app, right);
+    draw_diff(frame, app, diff);
+    draw_command_log(frame, app, log);
     draw_status_bar(frame, app, status_bar);
 
     match app.modal {
@@ -1316,6 +1324,46 @@ fn draw_help(frame: &mut Frame, t: &Theme, keys: &Keymap) {
     frame.render_widget(Paragraph::new(right), right_area);
 }
 
+/// One log line, marked by what it is: a command, a failure, or something that
+/// went right. The mark carries the meaning as well as the colour, so the pane
+/// still reads on a terminal with a narrow palette.
+fn log_line(t: &Theme, line: &LogLine) -> Line<'static> {
+    let (mark, color) = match line.kind {
+        LogKind::Command => ("  p4 ", t.idle),
+        LogKind::Error => ("   ! ", t.danger),
+        LogKind::Notice => ("   ✓ ", t.ok),
+    };
+    Line::from(vec![
+        Span::styled(mark, Style::default().fg(color)),
+        match line.kind {
+            LogKind::Command => Span::raw(line.text.clone()),
+            _ => Span::styled(line.text.clone(), Style::default().fg(color)),
+        },
+    ])
+}
+
+/// The log pane under the diff. It holds the newest lines only and never takes
+/// focus; the whole history is behind the log overlay.
+fn draw_command_log(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.config.theme;
+    let block = Block::bordered()
+        .border_style(Style::default().fg(t.idle))
+        .title(Span::styled(
+            " Log ",
+            Style::default().fg(t.muted).add_modifier(Modifier::BOLD),
+        ));
+    let rows = block.inner(area).height as usize;
+    let lines: Vec<Line> = app
+        .log
+        .iter()
+        .rev()
+        .take(rows)
+        .rev()
+        .map(|line| log_line(t, line))
+        .collect();
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
 fn draw_log(frame: &mut Frame, app: &App) {
     let t = &app.config.theme;
     let area = frame.area();
@@ -1326,12 +1374,7 @@ fn draw_log(frame: &mut Frame, app: &App) {
         .rev()
         .take(height)
         .rev()
-        .map(|cmd| {
-            Line::from(vec![
-                Span::styled("  p4 ", Style::default().fg(t.idle)),
-                Span::raw(cmd.clone()),
-            ])
-        })
+        .map(|line| log_line(t, line))
         .collect();
 
     overlay(

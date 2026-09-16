@@ -68,6 +68,25 @@ impl Panel {
     }
 }
 
+/// Where a line of the command log came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogKind {
+    /// A `p4` command the worker ran.
+    Command,
+    /// A command that failed. Kept, because the status bar holds one error at
+    /// a time and the next answer replaces it.
+    Error,
+    /// Something that went right, such as how many files a sync took.
+    Notice,
+}
+
+/// One line of the command log.
+#[derive(Debug, Clone)]
+pub struct LogLine {
+    pub kind: LogKind,
+    pub text: String,
+}
+
 /// Tabs of the Changelists panel, cycled with `[` and `]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeTab {
@@ -316,8 +335,11 @@ pub struct App {
     /// the first poll answers, so starting up is not read as a change.
     external: Option<String>,
 
-    /// Every command the worker ran, newest last.
-    pub log: Vec<String>,
+    /// Every command the worker ran and what came back, newest last.
+    pub log: Vec<LogLine>,
+    /// Whether the log overlay was opened from the help sheet, which decides
+    /// whether its key steps back to help or closes it.
+    log_from_help: bool,
     /// The last error, shown in the status bar until something replaces it.
     pub error: Option<String>,
 
@@ -389,6 +411,7 @@ impl App {
             diff_hscroll: 0,
             diff_fullscreen: false,
             log: Vec::new(),
+            log_from_help: false,
             error,
             worker,
             pending_files: None,
@@ -756,9 +779,22 @@ impl App {
         self.worker.send(Request::Refresh);
     }
 
-    /// The command currently running, for the busy line.
+    /// The command currently running, for the busy line. An error or a notice
+    /// is an answer rather than a command, so neither counts.
     pub fn running(&self) -> Option<&str> {
-        self.log.last().map(String::as_str)
+        self.log
+            .iter()
+            .rev()
+            .find(|line| line.kind == LogKind::Command)
+            .map(|line| line.text.as_str())
+    }
+
+    fn push_log(&mut self, kind: LogKind, text: String) {
+        self.log.push(LogLine { kind, text });
+        // The log is a debugging aid, not a transcript to keep forever.
+        if self.log.len() > 500 {
+            self.log.drain(..self.log.len() - 500);
+        }
     }
 
     pub fn handle(&mut self, event: Event) {
@@ -835,6 +871,7 @@ impl App {
                 self.workspaces = workspaces;
             }
             Event::Notice(text) => {
+                self.push_log(LogKind::Notice, text.clone());
                 self.notice = Some(text);
                 self.error = None;
             }
@@ -895,14 +932,11 @@ impl App {
                     self.diff_hscroll = 0;
                 }
             }
-            Event::Log(cmd) => {
-                self.log.push(cmd);
-                // The log is a debugging aid, not a transcript to keep forever.
-                if self.log.len() > 500 {
-                    self.log.drain(..self.log.len() - 500);
-                }
+            Event::Log(cmd) => self.push_log(LogKind::Command, cmd),
+            Event::Error(msg) => {
+                self.push_log(LogKind::Error, msg.clone());
+                self.error = Some(msg);
             }
-            Event::Error(msg) => self.error = Some(msg),
             Event::Idle => self.busy = false,
         }
     }
@@ -987,9 +1021,10 @@ impl App {
         match action {
             Action::Quit => self.quit = true,
             Action::Help => self.modal = Modal::Help,
-            // The log is a debugging aid, so it stays one step in, reachable
-            // from the help sheet rather than from a key of its own.
-            Action::Log => {}
+            Action::Log => {
+                self.log_from_help = false;
+                self.modal = Modal::Log;
+            }
             Action::Refresh => {
                 self.busy = true;
                 self.error = None;
@@ -1193,10 +1228,19 @@ impl App {
         }
 
         match self.modal {
-            // The log is a debugging aid, so it lives one step in, behind the
-            // help sheet rather than on a key of its own.
-            Modal::Help if self.config.keys.is(key, Action::Log) => self.modal = Modal::Log,
-            Modal::Log if self.config.keys.is(key, Action::Log) => self.modal = Modal::Help,
+            Modal::Help if self.config.keys.is(key, Action::Log) => {
+                self.log_from_help = true;
+                self.modal = Modal::Log;
+            }
+            // Opened from the help sheet, the key steps back to it rather than
+            // dumping you out entirely. Opened on its own, it closes.
+            Modal::Log if self.config.keys.is(key, Action::Log) => {
+                self.modal = if self.log_from_help {
+                    Modal::Help
+                } else {
+                    Modal::None
+                };
+            }
             Modal::History => self.history_key(key),
             Modal::Blame => self.blame_key(key),
             Modal::Resolve => self.resolve_key(key),
