@@ -69,6 +69,7 @@ Four things stay put, because they answer a question rather than name a command:
 - `1`–`4` and `0`, which focus the panels whose titles carry those numbers
 - `Ctrl-C`
 - `Enter` and `Esc` inside a dialog
-- `y` `t` `m` `a` inside the resolve view, and the `y` of any confirmation
+- `y` `t` `m` `a` inside the resolve view, and the `Enter` and `y` of any
+  confirmation
 
 Everything else is [configurable](configuration.md).

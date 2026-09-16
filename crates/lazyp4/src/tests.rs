@@ -2210,7 +2210,7 @@ fn d_deletes_an_empty_changelist_after_confirming() {
     assert!(app.last_request().is_none(), "nothing happens until y");
 
     let out = render(&app, 120, 40);
-    assert!(out.contains("y to confirm"), "{out}");
+    assert!(out.contains("Enter or y to confirm"), "{out}");
 
     press(&mut app, KeyCode::Char('y'));
     assert!(matches!(
@@ -2220,8 +2220,8 @@ fn d_deletes_an_empty_changelist_after_confirming() {
 }
 
 #[test]
-fn any_key_but_y_cancels_a_confirmation() {
-    for key in [KeyCode::Char('n'), KeyCode::Esc, KeyCode::Enter] {
+fn any_key_but_enter_or_y_cancels_a_confirmation() {
+    for key in [KeyCode::Char('n'), KeyCode::Esc, KeyCode::Char('x')] {
         let mut app = app();
         app.focus = Panel::Changelists;
         press(&mut app, KeyCode::Char('j'));
@@ -2868,6 +2868,24 @@ fn modals_open_and_close_without_quitting() {
 
     press(&mut app, KeyCode::Char('q'));
     assert!(app.quit);
+}
+
+#[test]
+fn enter_confirms_as_well_as_y() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.last_request();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(app.confirm.is_some(), "submit asks first");
+    assert!(app.last_request().is_none(), "nothing until it is answered");
+
+    press(&mut app, KeyCode::Enter);
+    assert!(app.confirm.is_none(), "the question is answered");
+    assert!(matches!(
+        app.last_request(),
+        Some(Request::Submit { change }) if change == ChangeId::Number(395)
+    ));
 }
 
 #[test]

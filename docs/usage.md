@@ -153,11 +153,11 @@ going in:
 │  M Foo.cpp                                    │
 │                                               │
 │  # Do not submit                              │
-└ y to confirm   any other key cancels ─────────┘
+└ Enter or y to confirm   any other key cancels ┘
 ```
 
-Confirmations have no default answer: only `y` proceeds, so a stray `Enter`
-cannot submit or discard anything.
+`Enter` and `y` both proceed. Every other key cancels, so a confirmation is
+never answered by a keystroke meant for the panel behind it.
 
 Submit is refused before it reaches the server when the changelist belongs to
 somebody else, is already submitted, or has no real description — Perforce

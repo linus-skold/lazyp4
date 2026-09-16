@@ -191,8 +191,8 @@ pub struct Picker {
 
 /// A question that must be answered before something irreversible happens.
 ///
-/// There is no default answer: only `y` goes ahead, and any other key backs
-/// out.
+/// Enter or `y` goes ahead, and any other key backs out. Both, because Enter
+/// is what the hand reaches for and `y` is what the eye reads.
 pub struct Confirm {
     pub title: String,
     /// What is about to happen, and to what.
@@ -976,10 +976,10 @@ impl App {
             return;
         }
 
-        // Only `y` goes ahead. Anything else — including a stray keystroke that
-        // means something elsewhere — backs out.
+        // Only Enter or `y` goes ahead. Anything else — including a stray
+        // keystroke that means something elsewhere — backs out.
         if let Some(confirm) = self.confirm.take() {
-            if key.code == KeyCode::Char('y') {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Char('y')) {
                 self.busy = true;
                 self.error = None;
                 self.worker.send(confirm.request);

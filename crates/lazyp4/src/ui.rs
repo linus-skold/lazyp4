@@ -451,10 +451,10 @@ fn draw_confirm(frame: &mut Frame, t: &Theme, confirm: &Confirm) {
                     format!(" {} ", confirm.title),
                     Style::default().fg(t.danger).add_modifier(Modifier::BOLD),
                 ))
-                // Naming the one key that proceeds, rather than offering a
-                // default that could be taken by a stray Enter.
+                // Naming the keys that proceed, so that nothing about the
+                // dialog has to be guessed at.
                 .title_bottom(Span::styled(
-                    " y to confirm   any other key cancels ",
+                    " Enter or y to confirm   any other key cancels ",
                     Style::default().fg(t.idle),
                 )),
         ),
