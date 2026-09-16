@@ -2898,11 +2898,11 @@ fn the_command_log_steps_back_to_the_help_sheet_it_was_opened_from() {
 }
 
 #[test]
-fn the_log_pane_keeps_a_failure_the_status_bar_has_already_dropped() {
+fn the_log_pane_keeps_what_the_status_bar_never_shows() {
     let mut app = app();
     app.handle(Event::Log("sync".into()));
     app.handle(Event::Error("sync: cannot clobber writable file Foo.cpp".into()));
-    // The status bar holds one line, so the notice takes the error's place.
+    // A later answer clears the error state, and the bar carries neither.
     app.handle(Event::Notice("14 file(s) updated".into()));
     assert!(app.error.is_none());
 

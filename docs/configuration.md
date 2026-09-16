@@ -1,7 +1,7 @@
 # Configuration
 
 Colours, keys and the diff tab width come from one file. Everything in it is
-optional, and anything lazyp4 cannot read is reported in the status bar rather
+optional, and anything lazyp4 cannot read is reported in the Log pane rather
 than ignored — a typo never fails silently.
 
 | Platform | Path |

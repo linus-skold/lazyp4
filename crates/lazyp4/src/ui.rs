@@ -1162,18 +1162,13 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let line = match (&app.error, app.busy) {
-        (Some(err), _) => Line::from(Span::styled(
-            format!(" {} ", err.replace('\n', " ")),
-            Style::default().fg(t.text).bg(t.danger),
-        )),
-        (None, false) if app.notice.is_some() => Line::from(Span::styled(
-            format!(" {} ", app.notice.as_deref().unwrap_or_default()),
-            Style::default().fg(t.inverse).bg(t.ok),
-        )),
+    // Errors and notices are kept in the Log pane, so this row stays with the
+    // keys. A message that covered them was worth less than what it hid, and
+    // it is recorded either way.
+    let line = if app.busy {
         // Several commands take tens of seconds, so say which one is running
         // rather than leaving the UI looking stuck.
-        (None, true) => Line::from(vec![
+        Line::from(vec![
             Span::styled(
                 format!(" {} ", SPINNER[app.spinner % SPINNER.len()]),
                 Style::default().fg(t.inverse).bg(t.focus),
@@ -1182,29 +1177,28 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 format!(" p4 {}", app.running().unwrap_or("working")),
                 Style::default().fg(t.focus),
             ),
-        ]),
-        (None, false) => {
-            let mut spans = Vec::new();
-            // What the focused panel can do comes first, then the keys that
-            // work everywhere.
-            let hint = |spans: &mut Vec<Span<'static>>, action: Action, ground, ink| {
-                spans.push(Span::styled(
-                    format!(" {} ", key_of(app, action)),
-                    Style::default().fg(t.inverse).bg(ground),
-                ));
-                spans.push(Span::styled(
-                    format!(" {}   ", action.short()),
-                    Style::default().fg(ink),
-                ));
-            };
-            for action in panel_actions(app) {
-                hint(&mut spans, *action, t.focus, t.text);
-            }
-            for action in [Action::Refresh, Action::Help, Action::Quit] {
-                hint(&mut spans, action, t.muted, t.idle);
-            }
-            Line::from(spans)
+        ])
+    } else {
+        let mut spans = Vec::new();
+        // What the focused panel can do comes first, then the keys that work
+        // everywhere.
+        let hint = |spans: &mut Vec<Span<'static>>, action: Action, ground, ink| {
+            spans.push(Span::styled(
+                format!(" {} ", key_of(app, action)),
+                Style::default().fg(t.inverse).bg(ground),
+            ));
+            spans.push(Span::styled(
+                format!(" {}   ", action.short()),
+                Style::default().fg(ink),
+            ));
+        };
+        for action in panel_actions(app) {
+            hint(&mut spans, *action, t.focus, t.text);
         }
+        for action in [Action::Refresh, Action::Help, Action::Quit] {
+            hint(&mut spans, action, t.muted, t.idle);
+        }
+        Line::from(spans)
     };
     frame.render_widget(Paragraph::new(line), area);
 }

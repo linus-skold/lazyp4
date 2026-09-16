@@ -356,12 +356,12 @@ impl App {
         worker.send(Request::Refresh);
         // A config the reader did not understand has to say so: the alternative
         // is a key that silently does nothing.
-        let error = match config.warnings.len() {
+        let warning = match config.warnings.len() {
             0 => None,
             1 => Some(config.warnings[0].clone()),
             n => Some(format!("{} (and {} more)", config.warnings[0], n - 1)),
         };
-        App {
+        let mut app = App {
             config,
             focus: Panel::Files,
             modal: Modal::None,
@@ -412,12 +412,19 @@ impl App {
             diff_fullscreen: false,
             log: Vec::new(),
             log_from_help: false,
-            error,
+            error: None,
             worker,
             pending_files: None,
             pending_diff: None,
             pending_revert: None,
+        };
+        // Through fail(), so it reaches the log too. The status bar no longer
+        // carries a message, and a key that silently does nothing is exactly
+        // what this warns about.
+        if let Some(msg) = warning {
+            app.fail(msg);
         }
+        app
     }
 
     /// Our own user name.
@@ -772,7 +779,7 @@ impl App {
             return;
         }
 
-        self.notice = Some("the workspace changed outside lazyp4 — reloaded".into());
+        self.notify("the workspace changed outside lazyp4 — reloaded".into());
         self.files_for = None;
         self.diffs_for = None;
         self.busy = true;
@@ -787,6 +794,21 @@ impl App {
             .rev()
             .find(|line| line.kind == LogKind::Command)
             .map(|line| line.text.as_str())
+    }
+
+    /// Report a failure. The status bar keeps its keys, so the log is where
+    /// this is read — and it stays there after the next command runs.
+    fn fail(&mut self, msg: String) {
+        self.push_log(LogKind::Error, msg.clone());
+        self.error = Some(msg);
+    }
+
+    /// Report something that went right. It clears a previous failure, which
+    /// is no longer the current state of things.
+    fn notify(&mut self, msg: String) {
+        self.push_log(LogKind::Notice, msg.clone());
+        self.notice = Some(msg);
+        self.error = None;
     }
 
     fn push_log(&mut self, kind: LogKind, text: String) {
@@ -870,11 +892,7 @@ impl App {
                     .unwrap_or(0);
                 self.workspaces = workspaces;
             }
-            Event::Notice(text) => {
-                self.push_log(LogKind::Notice, text.clone());
-                self.notice = Some(text);
-                self.error = None;
-            }
+            Event::Notice(text) => self.notify(text),
             Event::RevertPreview { files, preview } => self.confirm_revert(files, preview),
             Event::Unresolved(files) => {
                 self.unresolved = files;
@@ -898,7 +916,7 @@ impl App {
                 self.scanned.retain(|f| f.depot_path != depot_path);
                 self.merge_scanned();
                 self.file_sel = self.file_sel.min(self.selectable_count().saturating_sub(1));
-                self.notice = Some(format!("added {pattern} to {file}"));
+                self.notify(format!("added {pattern} to {file}"));
                 self.error = None;
             }
             Event::Changed => {
@@ -933,10 +951,7 @@ impl App {
                 }
             }
             Event::Log(cmd) => self.push_log(LogKind::Command, cmd),
-            Event::Error(msg) => {
-                self.push_log(LogKind::Error, msg.clone());
-                self.error = Some(msg);
-            }
+            Event::Error(msg) => self.fail(msg),
             Event::Idle => self.busy = false,
         }
     }
@@ -1121,7 +1136,7 @@ impl App {
     /// showing what the selected changelist holds.
     fn step_into_files(&mut self) {
         if self.selected_change().is_none() {
-            self.error = Some("select a changelist to see its files".into());
+            self.fail("select a changelist to see its files".into());
             return;
         }
         self.diff_source = Panel::Files;
@@ -1135,7 +1150,7 @@ impl App {
     /// submitted change has nothing to do with the work in progress there.
     fn open_submitted_change(&mut self) {
         let Some(cl) = self.selected_submit() else {
-            self.error = Some("select a change to see its files".into());
+            self.fail("select a change to see its files".into());
             return;
         };
         self.error = None;
@@ -1337,7 +1352,7 @@ impl App {
             return;
         };
         if stream.path == self.current_stream() {
-            self.error = Some("already on that stream".into());
+            self.fail("already on that stream".into());
             return;
         }
 
@@ -1385,7 +1400,7 @@ impl App {
             return;
         };
         if workspace.name == self.my_client() {
-            self.error = Some("already on that workspace".into());
+            self.fail("already on that workspace".into());
             return;
         }
 
@@ -1470,7 +1485,7 @@ impl App {
             self.focus,
             Panel::Files | Panel::Changelists | Panel::History
         ) {
-            self.error = Some("that panel is not a list".into());
+            self.fail("that panel is not a list".into());
             return;
         }
         self.error = None;
@@ -1511,11 +1526,11 @@ impl App {
             return;
         };
         if cl.status == ChangeStatus::Submitted || cl.id == ChangeId::Default {
-            self.error = Some("only a numbered pending changelist can be shelved".into());
+            self.fail("only a numbered pending changelist can be shelved".into());
             return;
         }
         if !self.is_here(&cl) {
-            self.error = Some(self.not_here(&cl).into());
+            self.fail(self.not_here(&cl).into());
             return;
         }
 
@@ -1547,7 +1562,7 @@ impl App {
             return;
         };
         if cl.status == ChangeStatus::Submitted || cl.id == ChangeId::Default {
-            self.error = Some("only a numbered pending changelist can be shelved".into());
+            self.fail("only a numbered pending changelist can be shelved".into());
             return;
         }
         let files = self.selected_files();
@@ -1569,7 +1584,7 @@ impl App {
             return;
         };
         if !cl.shelved {
-            self.error = Some("that changelist has nothing shelved".into());
+            self.fail("that changelist has nothing shelved".into());
             return;
         }
         // Unshelving into its own changelist would be a no-op at best.
@@ -1586,7 +1601,7 @@ impl App {
             return;
         };
         if !cl.shelved {
-            self.error = Some("that changelist has nothing shelved".into());
+            self.fail("that changelist has nothing shelved".into());
             return;
         }
         self.ask(
@@ -1609,12 +1624,12 @@ impl App {
             return;
         };
         if cl.status != ChangeStatus::Submitted {
-            self.error = Some("only a submitted change can be undone".into());
+            self.fail("only a submitted change can be undone".into());
             return;
         }
         let root = self.depot_root();
         if root.is_empty() {
-            self.error = Some("no depot root to undo within".into());
+            self.fail("no depot root to undo within".into());
             return;
         }
 
@@ -1636,7 +1651,7 @@ impl App {
     /// Show every revision of the file under the cursor.
     fn show_history(&mut self) {
         let Some(file) = self.browsed_file() else {
-            self.error = Some("select a file to see its history".into());
+            self.fail("select a file to see its history".into());
             return;
         };
         let depot_path = file.depot_path.clone();
@@ -1663,18 +1678,18 @@ impl App {
             return;
         }
         let Some(file) = self.selected_file() else {
-            self.error = Some("select a file to ignore".into());
+            self.fail("select a file to ignore".into());
             return;
         };
         if !file.untracked() {
-            self.error = Some("that file is already under Perforce control".into());
+            self.fail("that file is already under Perforce control".into());
             return;
         }
         let (Some(local), Some(root)) = (
             file.local_path.clone(),
             self.info.as_ref().and_then(|i| i.client_root.clone()),
         ) else {
-            self.error = Some("no workspace root to write an ignore file in".into());
+            self.fail("no workspace root to write an ignore file in".into());
             return;
         };
         let depot_path = file.depot_path.clone();
@@ -1683,7 +1698,7 @@ impl App {
         // read; the default is what Perforce itself falls back to.
         let name = std::env::var("P4IGNORE").unwrap_or_else(|_| ".p4ignore".to_owned());
         let Some((file, pattern)) = ignore::entry(&root, &name, &local) else {
-            self.error = Some("that file is outside the workspace".into());
+            self.fail("that file is outside the workspace".into());
             return;
         };
 
@@ -1699,12 +1714,12 @@ impl App {
     /// Show who last wrote each line of the file under the cursor.
     fn show_blame(&mut self) {
         let Some(file) = self.browsed_file() else {
-            self.error = Some("select a file to blame it".into());
+            self.fail("select a file to blame it".into());
             return;
         };
         if file.untracked() {
             // Nothing is on the server to annotate.
-            self.error = Some("that file is not in the depot yet".into());
+            self.fail("that file is not in the depot yet".into());
             return;
         }
         let depot_path = file.depot_path.clone();
@@ -1748,7 +1763,7 @@ impl App {
         };
         if rev.rev <= 1 {
             // There is no earlier revision to put back.
-            self.error = Some("the first revision cannot be undone".into());
+            self.fail("the first revision cannot be undone".into());
             return;
         }
         let spec = format!("{}#{}", self.history_path, rev.rev);
@@ -1775,7 +1790,7 @@ impl App {
             return;
         };
         if cl.status == ChangeStatus::Submitted {
-            self.error = Some("that changelist is already submitted".into());
+            self.fail("that changelist is already submitted".into());
             return;
         }
         if cl.id == ChangeId::Default {
@@ -1783,7 +1798,7 @@ impl App {
             // so ask for one. Everything open in it goes, which is what the
             // confirmation then has to show.
             if self.files.is_empty() {
-                self.error = Some("the default changelist has no files".into());
+                self.fail("the default changelist has no files".into());
                 return;
             }
             self.error = None;
@@ -1795,15 +1810,15 @@ impl App {
             return;
         }
         if !self.is_here(&cl) {
-            self.error = Some(self.not_here(&cl).into());
+            self.fail(self.not_here(&cl).into());
             return;
         }
         if !text::has_description(&cl.description) {
-            self.error = Some("give the changelist a description first (e)".into());
+            self.fail("give the changelist a description first (e)".into());
             return;
         }
         if self.files_for == Some(cl.id) && self.files.is_empty() {
-            self.error = Some("that changelist has no files".into());
+            self.fail("that changelist has no files".into());
             return;
         }
 
@@ -1852,7 +1867,7 @@ impl App {
             return;
         }
         if self.focused_change().is_some_and(|cl| cl.status == ChangeStatus::Submitted) {
-            self.error = Some("a submitted changelist cannot be reverted".into());
+            self.fail("a submitted changelist cannot be reverted".into());
             return;
         }
 
@@ -1861,7 +1876,7 @@ impl App {
         let (open, unopened): (Vec<FileEntry>, Vec<FileEntry>) =
             files.into_iter().partition(|f| f.opened);
         if open.is_empty() {
-            self.error = Some(format!(
+            self.fail(format!(
                 "{} file(s) are not open — nothing to revert",
                 unopened.len()
             ));
@@ -1886,7 +1901,7 @@ impl App {
             return;
         };
         if preview.is_empty() {
-            self.error = Some("the server would revert nothing".into());
+            self.fail("the server would revert nothing".into());
             return;
         }
 
@@ -1915,17 +1930,17 @@ impl App {
             return;
         };
         if cl.id == ChangeId::Default {
-            self.error = Some("the default changelist cannot be deleted".into());
+            self.fail("the default changelist cannot be deleted".into());
             return;
         }
         if cl.status == ChangeStatus::Submitted {
-            self.error = Some("a submitted changelist cannot be deleted".into());
+            self.fail("a submitted changelist cannot be deleted".into());
             return;
         }
         // Only trustworthy for the changelist whose files we have actually
         // loaded; otherwise the server refuses and says so.
         if self.files_for == Some(cl.id) && !self.files.is_empty() {
-            self.error = Some(format!(
+            self.fail(format!(
                 "changelist {} still holds {} file(s) — move or revert them first",
                 cl.id,
                 self.files.len()
@@ -1960,11 +1975,11 @@ impl App {
         };
         if cl.id == ChangeId::Default {
             // The default changelist is not a spec and has no description.
-            self.error = Some("the default changelist has no description".into());
+            self.fail("the default changelist has no description".into());
             return;
         }
         if cl.status == ChangeStatus::Submitted {
-            self.error = Some("a submitted changelist cannot be edited".into());
+            self.fail("a submitted changelist cannot be edited".into());
             return;
         }
 
@@ -1982,7 +1997,7 @@ impl App {
         };
         if editor.is_blank() {
             // Perforce rejects an empty description; say so before the round trip.
-            self.error = Some("a description cannot be empty".into());
+            self.fail("a description cannot be empty".into());
             return;
         }
         let description = editor.text();
@@ -2084,7 +2099,7 @@ impl App {
     /// Start or abandon a range selection.
     fn toggle_range(&mut self) {
         if self.focus != Panel::Files {
-            self.error = Some("a range can only be selected in Files".into());
+            self.fail("a range can only be selected in Files".into());
             return;
         }
         self.error = None;

@@ -14,8 +14,9 @@ log below it.
 
 The Log pane takes no focus and holds the newest lines only. Each line says
 what it is: `p4` for a command, `!` for a failure, `✓` for something that went
-right. A failure stays there after the status bar shows something else. `x`
-opens the full log, which keeps the last 500 lines.
+right. The status bar shows no messages at all — it keeps the key hints, and
+this pane is where a failure or a notice is read, so neither hides the other.
+`x` opens the full log, which keeps the last 500 lines.
 
 `3` holds the pending work, split by where its content lives:
 
