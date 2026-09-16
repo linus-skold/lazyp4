@@ -2952,6 +2952,7 @@ fn the_status_bar_shows_only_a_few_keys() {
         app.focus = panel;
         let out = render(&app, 120, 40);
         assert!(out.contains("submit"), "{panel:?}\n{out}");
+        assert!(out.contains("sync"), "{panel:?}\n{out}");
         assert!(out.contains("refresh"), "{panel:?}\n{out}");
         assert!(out.contains("help"), "{panel:?}\n{out}");
         assert!(!out.contains("quit"), "quit is not worth a slot\n{out}");

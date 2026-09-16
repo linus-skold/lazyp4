@@ -1198,7 +1198,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         // Submit is what the whole app is for, and it reaches the selected
         // changelist from any panel, so it is worth a place of its own.
         hint(&mut spans, Action::Submit, t.focus, t.text);
-        for action in [Action::Refresh, Action::Help] {
+        for action in [Action::Sync, Action::Refresh, Action::Help] {
             hint(&mut spans, action, t.muted, t.idle);
         }
         Line::from(spans)
