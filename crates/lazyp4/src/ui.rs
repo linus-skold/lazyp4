@@ -1195,7 +1195,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         for action in panel_actions(app) {
             hint(&mut spans, *action, t.focus, t.text);
         }
-        for action in [Action::Refresh, Action::Help, Action::Quit] {
+        // Submit is what the whole app is for, and it reaches the selected
+        // changelist from any panel, so it is worth a place of its own.
+        hint(&mut spans, Action::Submit, t.focus, t.text);
+        for action in [Action::Refresh, Action::Help] {
             hint(&mut spans, action, t.muted, t.idle);
         }
         Line::from(spans)
@@ -1217,27 +1220,16 @@ fn key_of(app: &App, action: Action) -> String {
 fn panel_actions(app: &App) -> &'static [Action] {
     // Opened on a change, History is a file tree with a way back out.
     if app.focus == Panel::History && app.history_open.is_some() {
-        return &[Action::Blame, Action::History, Action::Cancel];
+        return &[Action::Cancel];
     }
+    // One or two keys, not a menu: a row of nine is read as decoration, and
+    // `?` is the place to go looking. `d` appears only where it does
+    // something — it reverts a file in Files and deletes a changelist in
+    // Changelists, and reaches neither from the diff.
     match app.focus {
-        Panel::Files => &[
-            Action::Move,
-            Action::RevertFiles,
-            Action::History,
-            Action::Blame,
-            Action::Scan,
-        ],
-        Panel::Changelists => &[
-            Action::Submit,
-            Action::ShelveChange,
-            Action::Unshelve,
-            Action::NewChange,
-            Action::Describe,
-            Action::DeleteChange,
-        ],
-        Panel::History => &[Action::Undo, Action::Fullscreen],
-        Panel::Diff => &[Action::Fullscreen, Action::Left],
-        Panel::Status => &[],
+        Panel::Files => &[Action::RevertFiles],
+        Panel::Changelists => &[Action::Describe, Action::DeleteChange],
+        _ => &[],
     }
 }
 
@@ -1274,8 +1266,12 @@ fn draw_help(frame: &mut Frame, t: &Theme, keys: &Keymap) {
                 .add_modifier(Modifier::BOLD),
         ))];
         out.extend(rows(group).into_iter().map(|(key, what)| {
+            // Nine wide lines the descriptions up, but a rebound key can be
+            // longer than that, and a key that touches its own description
+            // reads as one word.
+            let width = 9.max(key.chars().count() + 1);
             Line::from(vec![
-                Span::styled(format!("{key:<9}"), Style::default().fg(t.focus)),
+                Span::styled(format!("{key:<width$}"), Style::default().fg(t.focus)),
                 Span::raw(what.to_owned()),
             ])
         }));

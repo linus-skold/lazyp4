@@ -34,7 +34,7 @@ sheet, `x` steps back to it.
 | `H` | revision history — `U` there undoes one revision |
 | `a` | blame, line by line |
 | `i` | add an untracked file to the ignore file |
-| `u` | scan for files changed but not open (slow) |
+| `u` | find offline work: files changed on disk without telling Perforce, which is what `p4 reconcile` acts on (slow) |
 
 ## Changelists
 

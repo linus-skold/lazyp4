@@ -2408,7 +2408,7 @@ fn the_help_sheet_and_the_status_bar_name_the_keys_actually_bound() {
     app.focus = Panel::Files;
 
     let bar = render(&app, 120, 40);
-    assert!(bar.contains("ctrl-b"), "the bar hints the real key\n{bar}");
+    assert!(bar.contains("C  submit"), "the bar hints the real key\n{bar}");
 
     press(&mut app, KeyCode::Char('?'));
     let out = render(&app, 120, 40);
@@ -2921,29 +2921,41 @@ fn the_help_sheet_groups_keys_by_where_they_apply() {
     for heading in ["Navigation", "Files", "Changelists", "Diff and app"] {
         assert!(out.contains(heading), "missing {heading}\n{out}");
     }
-    assert!(out.contains("revert, discarding"), "{out}");
+    assert!(out.contains("revert (discard"), "{out}");
+    // A key label wider than the column pad must not run into its own
+    // description: `tab / shift-tab` is fifteen characters against a pad of
+    // nine, and once read as `shift-tabcycle panels`.
+    assert!(out.contains("tab / shift-tab cycle panels"), "{out}");
 }
 
 #[test]
-fn the_status_bar_shows_the_focused_panel_s_keys() {
+fn the_status_bar_shows_only_a_few_keys() {
     let mut app = app();
 
     app.focus = Panel::Files;
     let out = render(&app, 120, 40);
-    assert!(out.contains("revert"), "{out}");
-    assert!(out.contains("scan"), "{out}");
+    assert!(out.contains("discard"), "{out}");
+    // The rest of the Files keys are a `?` away rather than in the bar.
+    assert!(!out.contains("blame"), "{out}");
+    assert!(!out.contains("scan"), "{out}");
 
     app.focus = Panel::Changelists;
     let out = render(&app, 120, 40);
-    assert!(out.contains("submit"), "{out}");
-    assert!(out.contains("describe"), "{out}");
-    assert!(!out.contains("scan"), "Files keys are gone\n{out}");
+    assert!(out.contains("edit"), "{out}");
+    assert!(out.contains("delete"), "{out}");
+    assert!(!out.contains("discard"), "Files keys are gone\n{out}");
+    assert!(!out.contains("shelve"), "{out}");
 
-    app.focus = Panel::History;
-    assert!(render(&app, 120, 40).contains("undo"));
-
-    // The everywhere keys stay put.
-    assert!(render(&app, 120, 40).contains("quit"));
+    // Submit reaches the selected changelist from anywhere, so it stays, and
+    // so do the two keys that explain the app itself.
+    for panel in [Panel::Files, Panel::Changelists, Panel::Diff] {
+        app.focus = panel;
+        let out = render(&app, 120, 40);
+        assert!(out.contains("submit"), "{panel:?}\n{out}");
+        assert!(out.contains("refresh"), "{panel:?}\n{out}");
+        assert!(out.contains("help"), "{panel:?}\n{out}");
+        assert!(!out.contains("quit"), "quit is not worth a slot\n{out}");
+    }
 }
 
 #[test]
