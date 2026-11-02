@@ -60,7 +60,13 @@ fn handle_event(terminal: &ratatui::DefaultTerminal, app: &mut App, event: worke
     match event {
         worker::Event::Input(TermEvent::Mouse(mouse)) => {
             let size = terminal.size()?;
-            app.handle_mouse(mouse, Rect::new(0, 0, size.width, size.height));
+            app.viewport = Rect::new(0, 0, size.width, size.height);
+            app.handle_mouse(mouse, app.viewport);
+        }
+        worker::Event::Input(TermEvent::Key(key)) => {
+            let size = terminal.size()?;
+            app.viewport = Rect::new(0, 0, size.width, size.height);
+            app.handle(worker::Event::Input(TermEvent::Key(key)));
         }
         event => app.handle(event),
     }

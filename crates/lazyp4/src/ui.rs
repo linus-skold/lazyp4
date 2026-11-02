@@ -1,11 +1,12 @@
 //! Rendering. Layout only — every decision lives in [`crate::app`].
 
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, CellWidth};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, StatefulWidget};
 use ratatui::Frame;
+use unicode_segmentation::UnicodeSegmentation;
 
 use p4::{Changelist, FileAction};
 
@@ -1033,8 +1034,82 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn detail_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let Some(change) = app.detail_change() else {
+        return vec![Line::from("select a changelist")];
+    };
+    let status = match change.status {
+        p4::ChangeStatus::New => "new",
+        p4::ChangeStatus::Pending => "pending",
+        p4::ChangeStatus::Submitted => "submitted",
+        p4::ChangeStatus::Shelved => "shelved",
+    };
+    let mut text = vec![
+        format!("Changelist {}", change.id),
+        format!("User       {}", change.user),
+        format!("Workspace  {}", change.client),
+        format!("Status     {status}"),
+    ];
+    if change.shelved {
+        text.push("Shelved    yes".to_owned());
+    }
+    text.push(String::new());
+    text.extend(change.description.split('\n').map(|line| diffview::expand_tabs(line, app.config.tab_width)));
+    text.iter().flat_map(|line| wrap_detail_line(line, width)).map(Line::from).collect()
+}
+
+fn wrap_detail_line(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let graphemes: Vec<&str> = text.graphemes(true).filter(|g| !g.chars().any(char::is_control)).collect();
+    let mut result = Vec::new();
+    let mut start = 0;
+    while start < graphemes.len() {
+        let mut end = start;
+        let mut used = 0;
+        let mut last_space = None;
+        while end < graphemes.len() {
+            let next = usize::from(graphemes[end].cell_width());
+            if used + next > width && end > start {
+                break;
+            }
+            used += next;
+            if graphemes[end].chars().all(char::is_whitespace) {
+                last_space = Some(end + 1);
+            }
+            end += 1;
+            if used > width {
+                break;
+            }
+        }
+        if end < graphemes.len() {
+            end = last_space.filter(|&space| space > start + 1).unwrap_or(end);
+        }
+        result.push(graphemes[start..end].concat());
+        start = end;
+    }
+    if result.is_empty() {
+        result.push(String::new());
+    }
+    result
+}
+
+pub fn detail_scroll_limit(app: &App, area: Rect) -> usize {
+    let visible = area.height.saturating_sub(2) as usize;
+    detail_lines(app, area.width.saturating_sub(2) as usize).len().saturating_sub(visible)
+}
+
 fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     let t = &app.config.theme;
+    if app.detail_panel().is_some() {
+        let lines = detail_lines(app, area.width.saturating_sub(2) as usize);
+        let max = lines.len().saturating_sub(area.height.saturating_sub(2) as usize);
+        let offset = app.detail_scroll.min(max);
+        frame.render_widget(
+            Paragraph::new(lines.into_iter().skip(offset).collect::<Vec<_>>()).block(panel_block(app, Panel::Diff, Some("Changelist".to_owned()))),
+            area,
+        );
+        return;
+    }
     let Some(file) = app.browsed_file() else {
         frame.render_widget(
             Paragraph::new("select a file")

@@ -566,6 +566,127 @@ fn a_stale_file_answer_is_ignored() {
 }
 
 #[test]
+fn changelist_details_follow_the_selection_and_wrap_the_description() {
+    let mut app = app();
+    let change = app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap();
+    change.description = format!("First line\n{}\nLast paragraph", "long description ".repeat(8));
+    app.focus = Panel::Changelists;
+    let out = render(&app, 100, 40);
+    assert!(out.contains("Changelist 395"), "{out}");
+    assert!(out.contains("First line"), "{out}");
+    assert!(out.contains("Last paragraph"), "{out}");
+    assert_eq!(out.matches("description").count(), 8, "{out}");
+    press(&mut app, KeyCode::Char('j'));
+    let out = render(&app, 100, 40);
+    assert!(out.contains("Changelist 308"), "{out}");
+    assert!(!out.contains("Last paragraph"), "{out}");
+    app.focus = Panel::History;
+    let out = render(&app, 100, 40);
+    assert!(out.contains("Changelist 396"), "{out}");
+    assert!(out.contains("submitted"), "{out}");
+}
+
+#[test]
+fn a_long_changelist_description_scrolls_and_returns_to_the_file_diff() {
+    let mut app = app();
+    let change = app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap();
+    change.description = (0..40).map(|i| format!("description line {i}\n")).collect();
+    app.focus = Panel::Changelists;
+    let area = ratatui::layout::Rect::new(0, 0, 120, 20);
+    assert!(!render(&app, 120, 20).contains("description line 39"));
+    for _ in 0..30 {
+        app.handle_mouse(MouseEvent { kind: MouseEventKind::ScrollDown, column: 80, row: 3, modifiers: KeyModifiers::NONE }, area);
+    }
+    assert!(render(&app, 120, 20).contains("description line 39"));
+    press(&mut app, KeyCode::Char('0'));
+    press(&mut app, KeyCode::Char('g'));
+    assert!(render(&app, 120, 20).contains("description line 0"));
+    press(&mut app, KeyCode::Char('2'));
+    press(&mut app, KeyCode::Char('j'));
+    assert!(render(&app, 120, 20).contains("+added"));
+}
+
+#[test]
+fn changelist_details_wrap_wide_characters_without_losing_text_or_adding_blank_lines() {
+    let mut app = app();
+    let change = app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap();
+    change.description = format!("{}END\n{}KATAKANA_END\n{}\nNEXT", "界".repeat(40), "ｶﾞ".repeat(40), "x".repeat(56));
+    app.focus = Panel::Changelists;
+    let out = render(&app, 100, 40);
+    assert!(out.contains("END"), "{out}");
+    assert!(out.contains("KATAKANA_END"), "{out}");
+    let lines: Vec<_> = out.lines().collect();
+    let exact = lines.iter().position(|line| line.contains(&"x".repeat(56))).unwrap();
+    assert!(lines[exact + 1].contains("NEXT"), "{out}");
+}
+
+#[test]
+fn keyboard_scrolling_moves_up_after_reaching_the_end_of_details() {
+    let mut app = app();
+    app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap().description =
+        (0..50).map(|i| format!("description line {i}\n")).collect();
+    app.focus = Panel::Changelists;
+    app.viewport = ratatui::layout::Rect::new(0, 0, 120, 20);
+    press(&mut app, KeyCode::Char('0'));
+    press(&mut app, KeyCode::End);
+    let bottom = render(&app, 120, 20);
+    assert!(bottom.contains("description line 49"));
+    for _ in 0..10 { press(&mut app, KeyCode::Down); }
+    press(&mut app, KeyCode::Up);
+    assert_ne!(render(&app, 120, 20), bottom);
+}
+
+#[test]
+fn refreshing_to_a_different_changelist_resets_detail_scroll() {
+    let mut app = app();
+    app.focus = Panel::History;
+    app.detail_scroll = 20;
+    let pending = app.pending.clone();
+    let submitted = vec![change(400, MINE, ChangeStatus::Submitted, false, "new history entry")];
+    app.handle(Event::Changes { pending, submitted });
+    assert_eq!(app.detail_scroll, 0);
+    assert!(render(&app, 120, 20).contains("new history entry"));
+}
+
+#[test]
+fn refreshing_unrelated_history_keeps_pending_description_position() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.detail_scroll = 5;
+    let pending = app.pending.clone();
+    let submitted = vec![change(400, MINE, ChangeStatus::Submitted, false, "new history entry")];
+    app.handle(Event::Changes { pending, submitted });
+    assert_eq!(app.detail_scroll, 5);
+}
+
+#[test]
+fn returning_from_history_files_keeps_subsequent_detail_scrolling() {
+    let mut app = app();
+    app.submitted[0].description = (0..50).map(|i| format!("history line {i}\n")).collect();
+    press(&mut app, KeyCode::Char('4'));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Esc);
+    let area = ratatui::layout::Rect::new(0, 0, 120, 20);
+    app.handle_mouse(MouseEvent { kind: MouseEventKind::ScrollDown, column: 80, row: 3, modifiers: KeyModifiers::NONE }, area);
+    let before = app.detail_scroll;
+    assert!(before > 0);
+    press(&mut app, KeyCode::Char('0'));
+    assert_eq!(app.detail_scroll, before);
+}
+
+#[test]
+fn very_long_changelist_details_can_reach_the_end() {
+    let mut app = app();
+    app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap().description =
+        format!("{}THE_END", "line\n".repeat(70_000));
+    app.focus = Panel::Changelists;
+    app.viewport = ratatui::layout::Rect::new(0, 0, 120, 20);
+    press(&mut app, KeyCode::Char('0'));
+    press(&mut app, KeyCode::End);
+    assert!(render(&app, 120, 20).contains("THE_END"));
+}
+
+#[test]
 fn the_diff_pane_follows_the_selected_file() {
     let mut app = app();
     assert!(app.selected_diff().is_none());
@@ -2639,10 +2760,7 @@ fn a_long_description_wraps_and_scrolls_to_the_cursor() {
 
     let out = render(&app, 120, 40);
     assert!(out.contains("tail"), "what is being typed must stay in view: {out}");
-    assert!(
-        !out.contains("# Do not submit"),
-        "the popup scrolled, so the start is off screen: {out}"
-    );
+    assert_eq!(out.matches("# Do not submit").count(), 1, "only the background preview shows the start: {out}");
 }
 
 #[test]
