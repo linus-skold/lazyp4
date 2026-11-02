@@ -3522,7 +3522,9 @@ fn only_the_exact_binary_is_taken_from_a_zip() {
 #[test]
 fn each_managed_location_is_recognised() {
     let cargo = vec![PathBuf::from("/home/u/.cargo/bin")];
-    let kind = |p: &str| update::classify(Path::new(p), &cargo);
+    let exists = |_: &Path| false;
+    let probe = update::Probe { cargo_bins: &cargo, target_dir: None, exists: &exists };
+    let kind = |p: &str| update::classify(Path::new(p), &probe);
     assert_eq!(kind("/usr/bin/lazyp4"), Install::Package);
     assert_eq!(kind("/nix/store/abc-lazyp4-0.1.0/bin/lazyp4"), Install::Nix);
     assert_eq!(kind("/home/u/.cargo/bin/lazyp4"), Install::Cargo);
@@ -3708,4 +3710,242 @@ fn the_banner_keeps_the_key_hints_and_fits_a_narrow_terminal() {
     for (w, h) in [(40, 12), (20, 8), (12, 4)] {
         render(&app, w, h);
     }
+}
+
+#[test]
+fn cargo_records_and_target_dirs_mark_more_installs() {
+    fn kind(path: &str, target: Option<&Path>, recorded: bool) -> Install {
+        let exists = move |p: &Path| recorded && p == Path::new("/opt/tools/.crates2.json");
+        let probe = update::Probe { cargo_bins: &[], target_dir: target, exists: &exists };
+        update::classify(Path::new(path), &probe)
+    }
+    // `cargo install --root /opt/tools` leaves its record beside `bin`.
+    assert_eq!(kind("/opt/tools/bin/lazyp4", None, true), Install::Cargo);
+    assert_eq!(kind("/opt/tools/bin/lazyp4", None, false), Install::Direct);
+    // A build output in a CARGO_TARGET_DIR that is not named `target`.
+    let out = Some(Path::new("/build/out"));
+    assert_eq!(kind("/build/out/release/lazyp4", out, false), Install::DevBuild);
+    assert_eq!(kind("/build/other/lazyp4", out, false), Install::Direct);
+}
+#[test]
+fn cargo_takes_the_home_directory_the_way_the_platform_does() {
+    let env = |k: &str| match k {
+        "HOME" => Some("/h".to_owned()),
+        "USERPROFILE" => Some("/u".to_owned()),
+        _ => None,
+    };
+    let want = if cfg!(windows) { "/u/.cargo/bin" } else { "/h/.cargo/bin" };
+    assert_eq!(update::cargo_bin_dirs(env), [PathBuf::from(want)]);
+}
+
+#[test]
+fn a_refusal_is_an_error_that_carries_the_guidance() {
+    assert_eq!(update::require_direct(Install::Direct), Ok(()));
+    for (kind, word) in [
+        (Install::Package, "package manager"),
+        (Install::Nix, "Nix"),
+        (Install::Cargo, "cargo install"),
+        (Install::DevBuild, "developer build"),
+        (Install::NoAsset, "no release"),
+    ] {
+        let error = update::require_direct(kind).unwrap_err();
+        assert!(error.contains(word), "{kind:?}: {error}");
+    }
+}
+
+#[test]
+fn no_release_for_the_platform_means_no_update_hint() {
+    assert!(!Install::NoAsset.hint().contains("--update"));
+}
+
+#[test]
+fn the_update_flag_is_found_without_panicking_on_odd_arguments() {
+    use std::ffi::OsString;
+    let args = |list: &[&str]| list.iter().map(OsString::from).collect::<Vec<_>>();
+    assert!(update::wants_update(args(&["x", "--update"])));
+    assert!(!update::wants_update(args(&["--updates", "-u"])));
+    assert!(!update::wants_update(args(&[])));
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let odd = OsString::from_vec(vec![0xff, 0xfe]);
+        assert!(!update::wants_update([odd.clone()]));
+        assert!(update::wants_update([odd, OsString::from("--update")]));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let odd = OsString::from_wide(&[0xd800]);
+        assert!(!update::wants_update([odd.clone()]));
+        assert!(update::wants_update([odd, OsString::from("--update")]));
+    }
+}
+
+fn contents(dir: &Path) -> Vec<String> {
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+fn real_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
+#[test]
+fn a_locked_old_file_does_not_stop_a_windows_swap() {
+    let dir = scratch("locked-old");
+    let exe = dir.join("lazyp4.exe");
+    std::fs::write(&exe, b"old").unwrap();
+    // A directory cannot be removed as a file, as a locked file cannot.
+    std::fs::create_dir(dir.join("lazyp4.exe.old")).unwrap();
+    update::replace_with(&exe, b"new", true, &real_rename).unwrap();
+    assert_eq!(std::fs::read(&exe).unwrap(), b"new");
+    assert!(dir.join("lazyp4.exe.old").is_dir());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn an_existing_old_file_is_replaced_in_a_windows_swap() {
+    let dir = scratch("old-file");
+    let exe = dir.join("lazyp4.exe");
+    std::fs::write(&exe, b"old").unwrap();
+    std::fs::write(dir.join("lazyp4.exe.old"), b"older").unwrap();
+    update::replace_with(&exe, b"new", true, &real_rename).unwrap();
+    assert_eq!(std::fs::read(&exe).unwrap(), b"new");
+    assert_eq!(contents(&dir), ["lazyp4.exe"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A rename that fails on chosen calls (counted from 1).
+fn failing_on(calls: &'static [usize]) -> impl Fn(&Path, &Path) -> std::io::Result<()> {
+    let count = std::cell::Cell::new(0);
+    move |from, to| {
+        count.set(count.get() + 1);
+        if calls.contains(&count.get()) {
+            return Err(std::io::Error::other("rename refused"));
+        }
+        std::fs::rename(from, to)
+    }
+}
+
+#[test]
+fn a_windows_swap_that_fails_midway_restores_the_old_exe() {
+    let dir = scratch("restore");
+    let exe = dir.join("lazyp4.exe");
+    std::fs::write(&exe, b"old").unwrap();
+    // Call 1 moves the exe aside, call 2 moves the new one in and fails.
+    let error = update::replace_with(&exe, b"new", true, &failing_on(&[2])).unwrap_err();
+    assert!(error.contains("rename refused"), "{error}");
+    assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+    assert_eq!(contents(&dir), ["lazyp4.exe"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_windows_swap_that_cannot_restore_names_the_recovery_step() {
+    let dir = scratch("stranded");
+    let exe = dir.join("lazyp4.exe");
+    std::fs::write(&exe, b"old").unwrap();
+    // The move in and the move back both fail.
+    let error = update::replace_with(&exe, b"new", true, &failing_on(&[2, 3])).unwrap_err();
+    assert!(error.contains("lazyp4.exe.old") && error.contains("rename it back"), "{error}");
+    // The old binary is safe at `.old`, and the new one is kept.
+    assert_eq!(std::fs::read(dir.join("lazyp4.exe.old")).unwrap(), b"old");
+    assert!(contents(&dir).iter().any(|n| n.starts_with(".lazyp4.new.")));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_failed_swap_removes_the_temp_file() {
+    let dir = scratch("swap-fails");
+    let exe = dir.join("lazyp4");
+    std::fs::write(&exe, b"old").unwrap();
+    assert!(update::replace_with(&exe, b"new", false, &failing_on(&[1])).is_err());
+    assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+    assert_eq!(contents(&dir), ["lazyp4"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_temp_file_that_was_already_there_is_not_deleted() {
+    let dir = scratch("temp-exists");
+    let exe = dir.join("lazyp4");
+    std::fs::write(&exe, b"old").unwrap();
+    let temp = dir.join(format!(".lazyp4.new.{}", std::process::id()));
+    std::fs::write(&temp, b"not ours").unwrap();
+    assert!(update::replace_binary(&exe, b"new").is_err());
+    assert_eq!(std::fs::read(&temp).unwrap(), b"not ours");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn leftovers_of_earlier_updates_are_cleaned_and_nothing_else() {
+    let dir = scratch("leftovers");
+    let exe = dir.join("lazyp4.exe");
+    for name in [
+        "lazyp4.exe", "lazyp4.exe.old", "lazyp4.exe.old.123", ".lazyp4.new.77", "lazyp4.exe.oldish", "notes.txt",
+    ] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    update::clean_leftovers(&exe);
+    assert_eq!(contents(&dir), ["lazyp4.exe", "lazyp4.exe.oldish", "notes.txt"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_stamp_is_written_before_the_fetch() {
+    let dir = scratch("stamp-first");
+    let file = dir.join("update-check");
+    let seen = std::cell::RefCell::new(None);
+    let found = update::check(true, Some(&file), 5_000, Install::Direct, || {
+        // A user who quits here has already used up today's request.
+        *seen.borrow_mut() = Cache::parse(&std::fs::read_to_string(&file).unwrap());
+        Some(v(99, 0, 0))
+    });
+    assert!(found.is_some());
+    assert_eq!(*seen.borrow(), Some(Cache { checked: 5_000, latest: None }));
+    let after = Cache::parse(&std::fs::read_to_string(&file).unwrap());
+    assert_eq!(after, Some(Cache { checked: 5_000, latest: Some(v(99, 0, 0)) }));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_stamp_that_cannot_be_written_sends_no_request() {
+    let dir = scratch("stamp-fails");
+    // The cache path has a file where its directory should be.
+    std::fs::write(dir.join("blocked"), b"x").unwrap();
+    let file = dir.join("blocked").join("update-check");
+    let found = update::check(true, Some(&file), 5_000, Install::Direct, || panic!("no request is allowed"));
+    assert_eq!(found, None);
+    // No cache path at all is the same.
+    assert_eq!(update::check(true, None, 5_000, Install::Direct, || panic!("no request is allowed")), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_relative_cache_directory_is_not_used() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+    };
+    let abs = if cfg!(windows) { "C:\\cache" } else { "/cache" };
+    let home = if cfg!(windows) { "C:\\home" } else { "/home" };
+    let leaf = |dir: &str| PathBuf::from(dir).join("lazyp4").join("update-check");
+    // Relative values are skipped for the next option.
+    let got = update::cache_path(env(&[("LOCALAPPDATA", "rel"), ("XDG_CACHE_HOME", "also/rel")]));
+    assert_eq!(got, None);
+    let pairs: &'static [(&'static str, &'static str)] = if cfg!(windows) {
+        &[("LOCALAPPDATA", "rel"), ("XDG_CACHE_HOME", "C:\\cache"), ("HOME", "C:\\home")]
+    } else {
+        &[("LOCALAPPDATA", "rel"), ("XDG_CACHE_HOME", "/cache"), ("HOME", "/home")]
+    };
+    assert_eq!(update::cache_path(env(pairs)), Some(leaf(abs)));
+    let pairs: &'static [(&'static str, &'static str)] = if cfg!(windows) {
+        &[("XDG_CACHE_HOME", "."), ("HOME", "C:\\home")]
+    } else {
+        &[("XDG_CACHE_HOME", "."), ("HOME", "/home")]
+    };
+    assert_eq!(update::cache_path(env(pairs)), Some(leaf(&format!("{home}{}.cache", std::path::MAIN_SEPARATOR))));
 }

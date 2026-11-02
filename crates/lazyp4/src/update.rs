@@ -205,11 +205,15 @@ pub enum Install {
     Cargo,
     /// A binary in a cargo `target` directory.
     DevBuild,
+    /// A direct install on a platform that has no release archive.
+    NoAsset,
 }
 
 /// The directories `cargo install` writes to: the install root, then
-/// `CARGO_HOME`, then `~/.cargo`. All of them count, so a binary from any
-/// earlier setting is still seen as cargo's.
+/// `CARGO_HOME`, then the home directory's `.cargo`. All of them count, so a
+/// binary from any earlier setting is still seen as cargo's. Cargo takes the
+/// home directory from `USERPROFILE` on Windows and from `HOME` elsewhere
+/// (from the `home` crate's documented rule; not checked against cargo itself).
 pub fn cargo_bin_dirs(var: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(root) = var("CARGO_INSTALL_ROOT") {
@@ -218,14 +222,31 @@ pub fn cargo_bin_dirs(var: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     if let Some(home) = var("CARGO_HOME") {
         dirs.push(PathBuf::from(home).join("bin"));
     }
-    if let Some(user) = var("HOME").or_else(|| var("USERPROFILE")) {
+    let user = if cfg!(windows) {
+        var("USERPROFILE").or_else(|| var("HOME"))
+    } else {
+        var("HOME")
+    };
+    if let Some(user) = user {
         dirs.push(PathBuf::from(user).join(".cargo").join("bin"));
     }
     dirs
 }
 
+/// What `classify` needs to know about the machine.
+pub struct Probe<'a> {
+    pub cargo_bins: &'a [PathBuf],
+    /// `CARGO_TARGET_DIR`, for a build output outside a `target` directory.
+    pub target_dir: Option<&'a Path>,
+    pub exists: &'a dyn Fn(&Path) -> bool,
+}
+
 /// Classify a resolved executable path (symlinks already followed).
-pub fn classify(exe: &Path, cargo_bins: &[PathBuf]) -> Install {
+///
+/// Limit: a developer build in a target directory with another name, and not
+/// set in `CARGO_TARGET_DIR` (for example in `.cargo/config.toml`), looks like
+/// a direct install.
+pub fn classify(exe: &Path, probe: &Probe) -> Install {
     if exe.starts_with("/nix/store") {
         return Install::Nix;
     }
@@ -235,8 +256,15 @@ pub fn classify(exe: &Path, cargo_bins: &[PathBuf]) -> Install {
             return Install::DevBuild;
         }
     }
+    if probe.target_dir.is_some_and(|t| exe.starts_with(t)) {
+        return Install::DevBuild;
+    }
     let dir = exe.parent();
-    if dir.is_some_and(|d| cargo_bins.iter().any(|c| d == c.as_path())) {
+    // `cargo install` records what it installed next to the bin directory.
+    let recorded = dir.and_then(Path::parent).is_some_and(|root| {
+        [".crates.toml", ".crates2.json"].iter().any(|f| (probe.exists)(&root.join(f)))
+    });
+    if recorded || dir.is_some_and(|d| probe.cargo_bins.iter().any(|c| d == c.as_path())) {
         return Install::Cargo;
     }
     if dir == Some(Path::new("/usr/bin")) {
@@ -253,10 +281,11 @@ impl Install {
             Install::Package => "use the package manager",
             Install::Nix => "update with Nix",
             Install::Cargo => "run cargo install again",
+            Install::NoAsset => "build from source",
         }
     }
 
-    /// What `--update` prints for an install it must not change.
+    /// What `--update` says for an install it must not change.
     fn guidance(self) -> &'static str {
         match self {
             Install::Direct => "",
@@ -275,8 +304,26 @@ impl Install {
                 "This is a developer build in a cargo target directory. Build the source again \
                  with cargo build."
             }
+            Install::NoAsset => {
+                "There is no release for this platform. To build from source, see docs/building.md."
+            }
         }
     }
+}
+
+/// `--update` changes only a direct install. Any other kind is a refusal, and
+/// the error carries what to do instead.
+pub fn require_direct(kind: Install) -> Result<(), String> {
+    match kind {
+        Install::Direct => Ok(()),
+        other => Err(format!("--update changed nothing. {}", other.guidance())),
+    }
+}
+
+/// True if `--update` is among the arguments. Compared as `OsString`, so a
+/// non-Unicode argument cannot panic.
+pub fn wants_update(args: impl IntoIterator<Item = std::ffi::OsString>) -> bool {
+    args.into_iter().any(|a| a == "--update")
 }
 
 /// The running binary with symlinks resolved, and what kind of install it is.
@@ -288,7 +335,15 @@ fn current_install() -> Result<(PathBuf, Install), String> {
         .into_iter()
         .map(|d| fs::canonicalize(&d).unwrap_or(d))
         .collect();
-    let kind = classify(&exe, &cargo);
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .and_then(|d| fs::canonicalize(d).ok());
+    let exists = |p: &Path| p.exists();
+    let probe = Probe { cargo_bins: &cargo, target_dir: target.as_deref(), exists: &exists };
+    let mut kind = classify(&exe, &probe);
+    if kind == Install::Direct && asset_for(std::env::consts::OS, std::env::consts::ARCH).is_none() {
+        kind = Install::NoAsset;
+    }
     Ok((exe, kind))
 }
 
@@ -304,48 +359,106 @@ fn write_new(path: &Path, data: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
-fn swap(exe: &Path, new: &Path) -> io::Result<()> {
-    if !cfg!(windows) {
+/// The rename step is a parameter so that tests can make it fail.
+type Rename<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
+
+enum SwapError {
+    /// The old binary is still in place.
+    Failed(io::Error),
+    /// The old binary is at `old` and could not be moved back.
+    Stranded { old: PathBuf, error: io::Error },
+}
+
+fn swap(exe: &Path, new: &Path, windows: bool, rename: Rename) -> Result<(), SwapError> {
+    if !windows {
         // A rename replaces a running binary; a copy onto it can fail.
-        return fs::rename(new, exe);
+        return rename(new, exe).map_err(SwapError::Failed);
     }
     // Windows locks a running exe against writes but not against a rename.
-    let old = PathBuf::from(format!("{}.old", exe.display()));
-    match fs::remove_file(&old) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
+    // A `.old` that cannot be removed (an older lazyp4 may still run from it)
+    // must not stop the update, so the next name carries the process id.
+    let mut old = PathBuf::from(format!("{}.old", exe.display()));
+    if fs::remove_file(&old).is_err() && old.exists() {
+        old = PathBuf::from(format!("{}.old.{}", exe.display(), std::process::id()));
+        let _ = fs::remove_file(&old);
     }
-    fs::rename(exe, &old)?;
-    if let Err(e) = fs::rename(new, exe) {
-        let _ = fs::rename(&old, exe);
-        return Err(e);
+    rename(exe, &old).map_err(SwapError::Failed)?;
+    if let Err(error) = rename(new, exe) {
+        return Err(match rename(&old, exe) {
+            Ok(()) => SwapError::Failed(error),
+            Err(_) => SwapError::Stranded { old, error },
+        });
     }
     // Fails while this process runs from it; the next update removes it.
     let _ = fs::remove_file(&old);
     Ok(())
 }
 
-/// Put `data` in place of `exe`. The temp file is in the same directory so
-/// that the rename cannot cross a file system. On failure the old binary is
-/// still in place and the temp file is gone.
-pub fn replace_binary(exe: &Path, data: &[u8]) -> Result<(), String> {
-    let dir = exe.parent().ok_or("the binary has no directory")?;
-    let temp = dir.join(format!(".lazyp4.new.{}", std::process::id()));
-    let result = write_new(&temp, data).and_then(|()| swap(exe, &temp));
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
+/// Remove what an earlier update left in the directory: `.old` files and
+/// temp files. Errors are ignored: a file that a running lazyp4 holds goes
+/// on the next run.
+pub fn clean_leftovers(exe: &Path) {
+    let (Some(dir), Some(name)) = (exe.parent(), exe.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    let old = format!("{name}.old");
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let file = entry.file_name();
+        let Some(file) = file.to_str() else { continue };
+        let stale = file == old
+            || file.strip_prefix(&old).is_some_and(|rest| rest.starts_with('.'))
+            || file.starts_with(".lazyp4.new.");
+        if stale && entry.file_type().is_ok_and(|t| t.is_file()) {
+            let _ = fs::remove_file(entry.path());
+        }
     }
-    result.map_err(|e| match e.kind() {
-        io::ErrorKind::PermissionDenied => format!(
-            "cannot write to {}. Run the update as a user who can write there, or install \
-             lazyp4 in a directory you own.",
-            dir.display()
-        ),
-        _ => format!("could not replace {}: {e}", exe.display()),
-    })
 }
 
+/// Put `data` in place of `exe`.
+pub fn replace_binary(exe: &Path, data: &[u8]) -> Result<(), String> {
+    replace_with(exe, data, cfg!(windows), &|from, to| fs::rename(from, to))
+}
+
+/// The temp file is in the same directory so that the rename cannot cross a
+/// file system. On failure the old binary is in place and the temp file is
+/// gone. The one exception is a Windows swap that cannot undo itself: then
+/// the message names the `.old` file to move back.
+pub fn replace_with(exe: &Path, data: &[u8], windows: bool, rename: Rename) -> Result<(), String> {
+    let dir = exe.parent().ok_or("the binary has no directory")?;
+    let temp = dir.join(format!(".lazyp4.new.{}", std::process::id()));
+    let denied = |e: &io::Error| {
+        (e.kind() == io::ErrorKind::PermissionDenied).then(|| {
+            format!(
+                "cannot write to {}. Run the update as a user who can write there, or install \
+                 lazyp4 in a directory you own.",
+                dir.display()
+            )
+        })
+    };
+    if let Err(e) = write_new(&temp, data) {
+        // Never delete a file that this call did not create.
+        if e.kind() != io::ErrorKind::AlreadyExists {
+            let _ = fs::remove_file(&temp);
+        }
+        return Err(denied(&e).unwrap_or_else(|| format!("could not write {}: {e}", temp.display())));
+    }
+    match swap(exe, &temp, windows, rename) {
+        Ok(()) => Ok(()),
+        Err(SwapError::Failed(e)) => {
+            let _ = fs::remove_file(&temp);
+            Err(denied(&e).unwrap_or_else(|| format!("could not replace {}: {e}", exe.display())))
+        }
+        Err(SwapError::Stranded { old, error }) => Err(format!(
+            "could not replace {}: {error}. The old binary is now {}. To recover, rename it back to {}. \
+             The new binary is {}.",
+            exe.display(),
+            old.display(),
+            exe.display(),
+            temp.display()
+        )),
+    }
+}
 // -- network ----------------------------------------------------------------
 
 enum Failure {
@@ -353,23 +466,25 @@ enum Failure {
     Other(String),
 }
 
-fn agent() -> ureq::Agent {
+/// `body_secs` limits the whole body, not the gap between reads, so a large
+/// archive needs a long one and the banner check a short one.
+fn agent(body_secs: u64) -> ureq::Agent {
     ureq::Agent::config_builder()
         // Redirects count: a redirect to plain HTTP is refused too.
         .https_only(true)
         .max_redirects(5)
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(20)))
-        .timeout_recv_body(Some(Duration::from_secs(60)))
-        .timeout_global(Some(Duration::from_secs(300)))
+        .timeout_recv_body(Some(Duration::from_secs(body_secs)))
+        .timeout_global(Some(Duration::from_secs(body_secs + 30)))
         // Name and version only. Nothing about the user or the server.
         .user_agent(format!("lazyp4/{CURRENT}"))
         .build()
         .into()
 }
 
-fn get(url: &str, limit: u64) -> Result<Vec<u8>, Failure> {
-    let mut response = agent().get(url).call().map_err(|e| match e {
+fn get(url: &str, limit: u64, body_secs: u64) -> Result<Vec<u8>, Failure> {
+    let mut response = agent(body_secs).get(url).call().map_err(|e| match e {
         ureq::Error::StatusCode(404) => Failure::NoRelease,
         e => Failure::Other(format!("request failed: {e}")),
     })?;
@@ -381,9 +496,9 @@ fn get(url: &str, limit: u64) -> Result<Vec<u8>, Failure> {
         .map_err(|e| Failure::Other(format!("download failed: {e}")))
 }
 
-fn fetch_latest() -> Result<Version, Failure> {
+fn fetch_latest(body_secs: u64) -> Result<Version, Failure> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let body = get(&url, MAX_JSON)?;
+    let body = get(&url, MAX_JSON, body_secs)?;
     let text = String::from_utf8(body).map_err(|_| Failure::Other("bad release data".into()))?;
     parse_latest(&text).map_err(Failure::Other)
 }
@@ -404,19 +519,13 @@ pub fn run() -> i32 {
 fn update() -> Result<(), String> {
     println!("current version: {CURRENT}");
     let (exe, kind) = current_install()?;
-    if kind != Install::Direct {
-        println!("{}", kind.guidance());
-        return Ok(());
-    }
-    let asset = asset_for(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
-        format!(
-            "there is no release for {} {}. To build from source, see docs/building.md.",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        )
-    })?;
+    require_direct(kind)?;
+    let asset = asset_for(std::env::consts::OS, std::env::consts::ARCH)
+        .ok_or_else(|| Install::NoAsset.guidance().to_owned())?;
+    // Before the version check, so that a stale file never blocks a later update.
+    clean_leftovers(&exe);
 
-    let latest = fetch_latest().map_err(|f| match f {
+    let latest = fetch_latest(30).map_err(|f| match f {
         Failure::NoRelease => "there is no published release yet.".to_owned(),
         Failure::Other(e) => e,
     })?;
@@ -428,7 +537,7 @@ fn update() -> Result<(), String> {
 
     let base = format!("https://github.com/{REPO}/releases/download/v{latest}");
     let fetch = |name: &str, limit| {
-        get(&format!("{base}/{name}"), limit).map_err(|f| match f {
+        get(&format!("{base}/{name}"), limit, 300).map_err(|f| match f {
             Failure::NoRelease => format!("the release has no {name}"),
             Failure::Other(e) => e,
         })
@@ -497,10 +606,12 @@ pub fn notice(latest: Option<Version>, current: Version, kind: Install) -> Optio
 
 /// Where the cache lives: the platform's cache directory.
 pub fn cache_path(var: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
-    let dir = var("LOCALAPPDATA")
-        .or_else(|| var("XDG_CACHE_HOME"))
-        .map(PathBuf::from)
-        .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+    // A relative path would put the file in whatever directory lazyp4 starts
+    // in, which can be a Perforce workspace.
+    let absolute = |name: &str| var(name).map(PathBuf::from).filter(|p| p.is_absolute());
+    let dir = absolute("LOCALAPPDATA")
+        .or_else(|| absolute("XDG_CACHE_HOME"))
+        .or_else(|| absolute("HOME").map(|h| h.join(".cache")))?;
     Some(dir.join("lazyp4").join("update-check"))
 }
 
@@ -511,9 +622,10 @@ fn now() -> u64 {
 }
 
 /// The whole banner decision. `fetch` is the only network call, and it runs
-/// only when the check is enabled and the cache is a day old or missing. A
-/// failed fetch still stamps the cache, so an offline machine tries once a
-/// day, not at every start.
+/// only when the check is enabled and the cache is a day old or missing. The
+/// stamp is written before the fetch. If it cannot be written, there is no
+/// fetch. So there is at most one request a day, also when the user quits
+/// during the fetch or the cache directory is read-only.
 pub fn check(
     enabled: bool,
     cache_file: Option<&Path>,
@@ -529,10 +641,16 @@ pub fn check(
         .and_then(|t| Cache::parse(&t));
     let mut latest = cache.and_then(|c| c.latest);
     if check_due(cache.as_ref(), now) {
-        latest = fetch().or(latest);
-        if let Some(path) = cache_file {
+        let write = |path: &Path, latest| {
             let _ = path.parent().map(fs::create_dir_all);
-            let _ = fs::write(path, Cache { checked: now, latest }.render());
+            fs::write(path, Cache { checked: now, latest }.render())
+        };
+        // The cached answer still counts when the stamp cannot be written.
+        if let Some(path) = cache_file.filter(|p| write(p, latest).is_ok()) {
+            if let Some(found) = fetch() {
+                latest = Some(found);
+                let _ = write(path, latest);
+            }
         }
     }
     notice(latest, Version::current(), kind)
@@ -547,7 +665,7 @@ pub fn spawn_check(enabled: bool, events: Sender<Event>) {
     std::thread::spawn(move || {
         let Ok((_, kind)) = current_install() else { return };
         let path = cache_path(|k| std::env::var(k).ok());
-        let found = check(true, path.as_deref(), now(), kind, || fetch_latest().ok());
+        let found = check(true, path.as_deref(), now(), kind, || fetch_latest(15).ok());
         if let Some(notice) = found {
             let _ = events.send(Event::Update(notice));
         }

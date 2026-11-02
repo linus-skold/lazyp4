@@ -35,7 +35,7 @@ const POLL: Duration = Duration::from_secs(5);
 
 fn main() -> io::Result<()> {
     // No worker and no terminal: this must work without a Perforce server.
-    if std::env::args().skip(1).any(|a| a == "--update") {
+    if update::wants_update(std::env::args_os().skip(1)) {
         std::process::exit(update::run());
     }
 
