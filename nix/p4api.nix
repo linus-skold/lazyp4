@@ -26,22 +26,22 @@ let
     x86_64-linux = {
       dir = "bin.linux26x86_64";
       file = "p4api-glibc2.12-openssl3.5.tgz";
-      hash = "sha256-s4QNfkuInkgJKRNHA9IhVAn4qG6OIGFY+2ZRc0CGgF0=";
+      hash = "sha256-KlG3fNRsbOY6eJ2udfyzUeOINs+9cs1Zy1k9N8cGKwo=";
     };
     aarch64-linux = {
       dir = "bin.linux26aarch64";
       file = "p4api-openssl3.5.tgz";
-      hash = "sha256-O7oltEkXNB3bwkFr3GirhBGNLcN8qQ7cXsgpBkreK2M=";
+      hash = "sha256-y9hQcSIL6DEZbEq6CtJTeVCqJUgknZ9oe8yadrKc9Y0=";
     };
     x86_64-darwin = {
       dir = "bin.macosx12x86_64";
       file = "p4api-openssl3.5.tgz";
-      hash = "sha256-LMP6EIkDIJ5XXEBkJIc0zvz0AStau5kx1thrGn/axSI=";
+      hash = "sha256-K7rOF4nXLPUn1uikbY8ujZ/H5i+A3gzhdVOOZ5v2V5k=";
     };
     aarch64-darwin = {
       dir = "bin.macosx12arm64";
       file = "p4api-openssl3.5.tgz";
-      hash = "sha256-abr/2K+Slwag/lwnjWCKswNPcb9zx3+N0rqS0d3LIgU=";
+      hash = "sha256-e23lIcx2fT349+XgwVB++HggUzedgjfOPPX19Ls3rnw=";
     };
   };
 
