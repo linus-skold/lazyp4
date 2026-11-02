@@ -50,6 +50,23 @@ cargo install --path crates/lazyp4
 
 Either way, run it with `lazyp4`.
 
+### Update
+
+To update a copy that the install script or a release archive put in place, run:
+
+```sh
+lazyp4 --update
+```
+
+It downloads the latest release, checks it against `SHA256SUMS`, and replaces
+the binary. It does not start the TUI. If the copy came from a `.deb`, an
+`.rpm`, Nix or `cargo install`, `--update` changes nothing and exits with a code that is
+not zero. It tells you how to update with that tool.
+
+Once a day, lazyp4 looks for a newer release in the background and shows a
+note in the Status panel. It sends no data about you or your server. To turn
+the check off, see [Configuration](docs/configuration.md#updates).
+
 ## Connecting
 
 lazyp4 uses the ambient `P4PORT`, `P4USER` and `P4CLIENT`, so run it from a
@@ -74,7 +91,7 @@ After that lazyp4 stands on its own. Closing that gap is
 | --- | --- |
 | [Usage](docs/usage.md) | The panels, and how to move files, submit, shelve, resolve and blame |
 | [Keys](docs/keys.md) | Every key, by panel. `?` shows the same thing in the app |
-| [Configuration](docs/configuration.md) | Colours, keybindings and the diff tab width |
+| [Configuration](docs/configuration.md) | Colours, keybindings, the diff tab width and the update check |
 | [Building](docs/building.md) | Building from source, and what the build script fetches |
 | [Releasing](docs/releasing.md) | How to make a release, and what it contains |
 | [Design](docs/design.md) | The crates, the worker thread, and where Perforce and git part company |

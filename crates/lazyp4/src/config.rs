@@ -21,6 +21,8 @@ pub struct Config {
     /// Columns a tab advances to in the diff and blame views.
     pub tab_width: usize,
     pub keys: Keymap,
+    /// Whether to look for a newer release, at most once a day.
+    pub update_check: bool,
     /// Lines that meant nothing, so a typo is not silent.
     pub warnings: Vec<String>,
 }
@@ -31,6 +33,7 @@ impl Default for Config {
             theme: Theme::default(),
             tab_width: 4,
             keys: Keymap::default(),
+            update_check: true,
             warnings: Vec::new(),
         }
     }
@@ -78,7 +81,7 @@ impl Config {
 
             if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
                 section = name.trim().to_lowercase();
-                if !matches!(section.as_str(), "theme" | "keys" | "diff") {
+                if !matches!(section.as_str(), "theme" | "keys" | "diff" | "update") {
                     config.warnings.push(where_(&format!("unknown section [{section}]")));
                 }
                 continue;
@@ -104,6 +107,11 @@ impl Config {
                     _ => config
                         .warnings
                         .push(where_("tab_width must be a number from 1 to 16")),
+                },
+                "update" if key == "check" => match value {
+                    "true" => config.update_check = true,
+                    "false" => config.update_check = false,
+                    _ => config.warnings.push(where_("check must be true or false")),
                 },
                 "keys" => match (Action::named(&key), Key::parse(value)) {
                     (Some(action), Some(k)) => {

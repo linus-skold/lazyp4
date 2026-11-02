@@ -232,6 +232,8 @@ pub enum Event {
     Workspaces(Vec<Workspace>),
     /// Something worth saying that is not an error.
     Notice(String),
+    /// The background check found a newer release.
+    Update(crate::update::Notice),
     /// A write finished. Descriptions and the default changelist's very
     /// existence both come from the change lists, so everything is now stale.
     Changed,
@@ -255,12 +257,13 @@ pub struct Worker {
 
 impl Worker {
     /// Start the worker and return it together with the shared event channel.
-    pub fn spawn() -> (Worker, Receiver<Event>) {
+    pub fn spawn(check_updates: bool) -> (Worker, Receiver<Event>) {
         let (req_tx, req_rx) = mpsc::channel::<Request>();
         let (ev_tx, ev_rx) = mpsc::channel::<Event>();
 
         let events = ev_tx.clone();
         thread::spawn(move || run(req_rx, events));
+        crate::update::spawn_check(check_updates, ev_tx.clone());
         spawn_input_reader(ev_tx);
 
         (

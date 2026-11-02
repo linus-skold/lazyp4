@@ -1117,9 +1117,22 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block(app, Panel::Status, None)),
+        Paragraph::new(lines).block(status_block(app)),
         area,
     );
+}
+
+/// The Status panel carries the update banner on its bottom border, where it
+/// hides no key hint and a narrow terminal clips it instead of the content.
+fn status_block(app: &App) -> Block<'static> {
+    let block = panel_block(app, Panel::Status, None);
+    match &app.update {
+        Some(n) => block.title_bottom(Span::styled(
+            format!(" new {}: {} ", n.version, n.hint),
+            Style::default().fg(app.config.theme.ok),
+        )),
+        None => block,
+    }
 }
 
 fn detail_lines(app: &App, width: usize) -> Vec<Line<'static>> {

@@ -270,3 +270,43 @@ the changelist is left exactly as the server sent it.
 
 While it sits still, lazyp4 checks every five seconds whether `p4` has been used
 in another window, and reloads if it has. `r` forces it.
+
+## Updating lazyp4
+
+When a newer release exists, the Status panel shows `new <version>` on its
+bottom border, with the action to take. For a copy from the install script or a
+release archive, the action is `lazyp4 --update`. For a `.deb`, an `.rpm`, Nix or
+`cargo install`, the note names that tool and never says `--update`. A
+developer build in a cargo `target` directory shows no note. On a platform with no
+release archive, the note says `build from source`.
+
+`lazyp4 --update` starts no TUI and needs no Perforce connection. It does these
+steps:
+
+1. It prints the current and the latest version. If you have the latest or a
+   newer version, it stops and changes nothing.
+2. It downloads the archive for your platform and `SHA256SUMS` from the release,
+   over HTTPS only.
+3. It checks the archive against `SHA256SUMS`. If the check fails, it stops.
+4. It takes the one binary from the archive and writes it to a temp file in
+   the same directory. On Linux and macOS, one rename puts it in place of the
+   running binary. On Windows, it renames the running `lazyp4.exe` to
+   `lazyp4.exe.old`, then renames the temp file to `lazyp4.exe`.
+
+On Windows, the `.old` file stays after the update, because the running
+program holds it. The next `--update` removes it. It removes only files named
+exactly `lazyp4.exe.old` or `lazyp4.exe.old.<number>`, and `.lazyp4.new.<number>`
+temp files, and only if they are more than one hour old. Other names, such as
+`lazyp4.exe.old.bak`, stay. On Linux and macOS no `.old` file is made or removed.
+If an older lazyp4 still
+runs from it, the update uses `lazyp4.exe.old.<pid>` and goes on. If the
+second rename fails, lazyp4 renames the `.old` file back. If that also fails,
+the message names the `.old` file. Rename it back to `lazyp4.exe` to
+recover. The temp file then stays, and holds the new binary.
+
+On failure the old binary stays in place and the exit code is not zero. If
+there is no published release, or no archive for your platform, it says so. If
+the directory is not writable, it names the directory. For a copy that a package
+manager, Nix or cargo owns, and for a developer build, it changes nothing,
+prints how to update with that tool on stderr, and exits with a code that is
+not zero.
