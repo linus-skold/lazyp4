@@ -277,7 +277,8 @@ When a newer release exists, the Status panel shows `new <version>` on its
 bottom border, with the action to take. For a copy from the install script or a
 release archive, the action is `lazyp4 --update`. For a `.deb`, an `.rpm`, Nix or
 `cargo install`, the note names that tool and never says `--update`. A
-developer build in a cargo `target` directory shows no note.
+developer build in a cargo `target` directory shows no note. On a platform with no
+release archive, the note says `build from source`.
 
 `lazyp4 --update` starts no TUI and needs no Perforce connection. It does these
 steps:
@@ -293,7 +294,11 @@ steps:
    `lazyp4.exe.old`, then renames the temp file to `lazyp4.exe`.
 
 On Windows, the `.old` file stays after the update, because the running
-program holds it. The next `--update` removes it. If an older lazyp4 still
+program holds it. The next `--update` removes it. It removes only files named
+exactly `lazyp4.exe.old` or `lazyp4.exe.old.<number>`, and `.lazyp4.new.<number>`
+temp files, and only if they are more than one hour old. Other names, such as
+`lazyp4.exe.old.bak`, stay. On Linux and macOS no `.old` file is made or removed.
+If an older lazyp4 still
 runs from it, the update uses `lazyp4.exe.old.<pid>` and goes on. If the
 second rename fails, lazyp4 renames the `.old` file back. If that also fails,
 the message names the `.old` file. Rename it back to `lazyp4.exe` to

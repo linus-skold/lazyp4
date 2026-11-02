@@ -394,10 +394,19 @@ fn swap(exe: &Path, new: &Path, windows: bool, rename: Rename) -> Result<(), Swa
     Ok(())
 }
 
-/// Remove what an earlier update left in the directory: `.old` files and
-/// temp files. Errors are ignored: a file that a running lazyp4 holds goes
-/// on the next run.
-pub fn clean_leftovers(exe: &Path) {
+/// A temp file younger than this may belong to an update that still runs.
+const TEMP_GRACE: Duration = Duration::from_secs(60 * 60);
+
+fn all_digits(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Remove what an earlier update left in the directory. Only these exact
+/// names go: `.lazyp4.new.<digits>`, and on Windows `<exe>.old` and
+/// `<exe>.old.<digits>`. A user's own `lazyp4.old` or `.bak` stays. A file
+/// that is less than an hour old stays, as another update may still use it.
+/// Errors are ignored: a file that a running lazyp4 holds goes on the next run.
+pub fn clean_leftovers(exe: &Path, windows: bool, now: SystemTime) {
     let (Some(dir), Some(name)) = (exe.parent(), exe.file_name().and_then(|n| n.to_str())) else {
         return;
     };
@@ -406,15 +415,23 @@ pub fn clean_leftovers(exe: &Path) {
     for entry in entries.flatten() {
         let file = entry.file_name();
         let Some(file) = file.to_str() else { continue };
-        let stale = file == old
-            || file.strip_prefix(&old).is_some_and(|rest| rest.starts_with('.'))
-            || file.starts_with(".lazyp4.new.");
-        if stale && entry.file_type().is_ok_and(|t| t.is_file()) {
+        let temp = file.strip_prefix(".lazyp4.new.").is_some_and(all_digits);
+        let aside = windows
+            && (file == old || file.strip_prefix(&old).and_then(|r| r.strip_prefix('.')).is_some_and(all_digits));
+        if !(temp || aside) || !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let age = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|m| now.duration_since(m).ok());
+        // An unreadable time or a time in the future counts as young.
+        if age.is_some_and(|a| a >= TEMP_GRACE) {
             let _ = fs::remove_file(entry.path());
         }
     }
 }
-
 /// Put `data` in place of `exe`.
 pub fn replace_binary(exe: &Path, data: &[u8]) -> Result<(), String> {
     replace_with(exe, data, cfg!(windows), &|from, to| fs::rename(from, to))
@@ -523,7 +540,7 @@ fn update() -> Result<(), String> {
     let asset = asset_for(std::env::consts::OS, std::env::consts::ARCH)
         .ok_or_else(|| Install::NoAsset.guidance().to_owned())?;
     // Before the version check, so that a stale file never blocks a later update.
-    clean_leftovers(&exe);
+    clean_leftovers(&exe, cfg!(windows), SystemTime::now());
 
     let latest = fetch_latest(30).map_err(|f| match f {
         Failure::NoRelease => "there is no published release yet.".to_owned(),

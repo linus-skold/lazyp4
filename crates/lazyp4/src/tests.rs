@@ -3883,18 +3883,51 @@ fn a_temp_file_that_was_already_there_is_not_deleted() {
 
 #[test]
 fn leftovers_of_earlier_updates_are_cleaned_and_nothing_else() {
-    let dir = scratch("leftovers");
-    let exe = dir.join("lazyp4.exe");
-    for name in [
-        "lazyp4.exe", "lazyp4.exe.old", "lazyp4.exe.old.123", ".lazyp4.new.77", "lazyp4.exe.oldish", "notes.txt",
-    ] {
-        std::fs::write(dir.join(name), b"x").unwrap();
-    }
-    update::clean_leftovers(&exe);
-    assert_eq!(contents(&dir), ["lazyp4.exe", "lazyp4.exe.oldish", "notes.txt"]);
-    std::fs::remove_dir_all(&dir).unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2 * 60 * 60);
+    let names = [
+        "lazyp4.exe", "lazyp4.exe.old", "lazyp4.exe.old.123", ".lazyp4.new.77", "lazyp4.exe.oldish",
+        "lazyp4.exe.old.bak", ".lazyp4.new.keep", "lazyp4.old", "notes.txt",
+    ];
+    let run = |windows: bool| {
+        let dir = scratch(if windows { "leftovers-win" } else { "leftovers-unix" });
+        let exe = dir.join(if windows { "lazyp4.exe" } else { "lazyp4" });
+        for name in names {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        update::clean_leftovers(&exe, windows, later);
+        let left = contents(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        left
+    };
+    assert_eq!(
+        run(true),
+        ["lazyp4.exe", "lazyp4.exe.old.bak", "lazyp4.exe.oldish", "lazyp4.old", ".lazyp4.new.keep", "notes.txt"]
+            .map(String::from)
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+    );
+    // Off Windows no `.old` file is ours, not even `lazyp4.old`'s kin.
+    let left = run(false);
+    assert!(left.contains(&"lazyp4.exe.old".to_owned()) && left.contains(&"lazyp4.old".to_owned()));
+    assert!(!left.contains(&".lazyp4.new.77".to_owned()));
 }
 
+#[test]
+fn a_young_temp_file_may_belong_to_a_running_update() {
+    let dir = scratch("young-temp");
+    let exe = dir.join("lazyp4.exe");
+    std::fs::write(dir.join(".lazyp4.new.77"), b"x").unwrap();
+    std::fs::write(dir.join("lazyp4.exe.old"), b"x").unwrap();
+    update::clean_leftovers(&exe, true, std::time::SystemTime::now());
+    assert_eq!(contents(&dir), [".lazyp4.new.77", "lazyp4.exe.old"]);
+    let almost = std::time::SystemTime::now() + std::time::Duration::from_secs(59 * 60);
+    update::clean_leftovers(&exe, true, almost);
+    assert_eq!(contents(&dir).len(), 2);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 #[test]
 fn the_stamp_is_written_before_the_fetch() {
     let dir = scratch("stamp-first");
