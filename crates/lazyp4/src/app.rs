@@ -2,13 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::{Position, Rect};
 use p4::{
     AnnotatedLine, ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, RevertPreview,
     Revision, ServerInfo, Stream, Unresolved, Workspace,
 };
 
 use crate::config::{Action, Config, Key};
+use crate::diffview;
 use crate::editor::{Editor, Outcome};
 use crate::ignore;
 use crate::text;
@@ -279,6 +281,9 @@ pub struct App {
     pub diff_hscroll: usize,
     /// Give the diff the whole window instead of the right-hand pane.
     pub diff_fullscreen: bool,
+    pub detail_source: Option<Panel>,
+    pub detail_scroll: usize,
+    pub viewport: Rect,
 
     /// Open description editor, if any. Takes every keystroke while it lives.
     pub editor: Option<Editor>,
@@ -410,6 +415,9 @@ impl App {
             diff_scroll: 0,
             diff_hscroll: 0,
             diff_fullscreen: false,
+            detail_source: None,
+            detail_scroll: 0,
+            viewport: Rect::new(0, 0, 80, 24),
             log: Vec::new(),
             log_from_help: false,
             error: None,
@@ -534,6 +542,23 @@ impl App {
                 None => self.selected_submit(),
             },
             _ => self.selected_change(),
+        }
+    }
+
+    pub fn detail_panel(&self) -> Option<Panel> {
+        match self.focus {
+            Panel::Changelists => Some(Panel::Changelists),
+            Panel::History if self.history_open.is_none() => Some(Panel::History),
+            Panel::Diff => self.detail_source,
+            _ => None,
+        }
+    }
+
+    pub fn detail_change(&self) -> Option<Changelist> {
+        match self.detail_panel() {
+            Some(Panel::Changelists) => self.selected_change(),
+            Some(Panel::History) => self.selected_submit(),
+            _ => None,
         }
     }
 
@@ -819,6 +844,46 @@ impl App {
         }
     }
 
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect) {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if self.modal == Modal::None && self.picker.is_none() && self.editor.is_none() && self.confirm.is_none() && self.filtering.is_none() {
+                if let Some(index) = crate::ui::file_row_at(self, area, Position::new(mouse.column, mouse.row)) {
+                    self.focus = Panel::Files;
+                    self.detail_source = None;
+                    self.set_selection(index);
+                }
+            }
+            return;
+        }
+        let (delta, key) = match mouse.kind {
+            MouseEventKind::ScrollUp => (-3, KeyCode::Up),
+            MouseEventKind::ScrollDown => (3, KeyCode::Down),
+            _ => return,
+        };
+        let diff_area = crate::ui::diff_area(area, self.diff_fullscreen);
+        if self.modal != Modal::None || self.picker.is_some() || self.editor.is_some() || self.confirm.is_some()
+            || !diff_area.contains(Position::new(mouse.column, mouse.row))
+        {
+            // Terminals commonly translate wheel events into arrow keys in the alternate screen.
+            if self.focus != Panel::Diff || self.modal != Modal::None || self.picker.is_some() || self.editor.is_some() || self.confirm.is_some() {
+                self.on_key(KeyEvent::new(key, mouse.modifiers));
+            }
+            return;
+        }
+        if self.detail_panel().is_some() {
+            let max = crate::ui::detail_scroll_limit(self, diff_area);
+            self.detail_scroll = self.detail_scroll.min(max).saturating_add_signed(delta).min(max);
+            return;
+        }
+        let Some(diff) = self.selected_diff() else {
+            return;
+        };
+        let rows = diffview::rows(&diff.hunks, self.config.tab_width).len();
+        let visible = diff_area.height.saturating_sub(2) as usize;
+        let max = rows.saturating_sub(visible);
+        self.diff_scroll = self.diff_scroll.min(max).saturating_add_signed(delta).min(max);
+    }
+
     pub fn handle(&mut self, event: Event) {
         match event {
             Event::Input(TermEvent::Key(key)) => self.on_key(key),
@@ -829,9 +894,13 @@ impl App {
                 self.follow_selection();
             }
             Event::Changes { pending, submitted } => {
+                let before = self.detail_change().map(|c| c.id);
                 self.pending = pending;
                 self.submitted = submitted;
                 self.clamp_selections();
+                if before != self.detail_change().map(|c| c.id) {
+                    self.detail_scroll = 0;
+                }
                 self.follow_selection();
             }
             Event::Files {
@@ -1012,6 +1081,7 @@ impl App {
         // Each panel's number is drawn in its title, so these stay put too.
         if let KeyCode::Char(c @ '0'..='9') = key.code {
             if let Some(panel) = Panel::from_number(c as u8 - b'0') {
+                self.point_diff_at_focus();
                 self.focus = panel;
                 self.point_diff_at_focus();
                 return;
@@ -1084,10 +1154,12 @@ impl App {
             Action::Fullscreen => self.toggle_fullscreen(),
             Action::Cancel => self.cancel(),
             Action::NextPanel => {
+                self.point_diff_at_focus();
                 self.focus = self.focus.step(1);
                 self.point_diff_at_focus();
             }
             Action::PrevPanel => {
+                self.point_diff_at_focus();
                 self.focus = self.focus.step(-1);
                 self.point_diff_at_focus();
             }
@@ -1140,6 +1212,7 @@ impl App {
             return;
         }
         self.diff_source = Panel::Files;
+        self.detail_source = None;
         self.focus = Panel::Files;
     }
 
@@ -1155,6 +1228,7 @@ impl App {
         };
         self.error = None;
         self.diff_source = Panel::History;
+        self.detail_source = None;
         self.diff_scroll = 0;
         self.diff_hscroll = 0;
 
@@ -1183,8 +1257,20 @@ impl App {
     /// list, or on the diff itself, leaves it where it was.
     fn point_diff_at_focus(&mut self) {
         match self.focus {
-            Panel::Files => self.diff_source = Panel::Files,
-            Panel::History if self.history_open.is_some() => self.diff_source = Panel::History,
+            Panel::Files => {
+                self.diff_source = Panel::Files;
+                self.detail_source = None;
+            }
+            Panel::History if self.history_open.is_some() => {
+                self.diff_source = Panel::History;
+                self.detail_source = None;
+            }
+            Panel::Changelists | Panel::History => {
+                if self.detail_source != Some(self.focus) {
+                    self.detail_scroll = 0;
+                }
+                self.detail_source = Some(self.focus);
+            }
             _ => {}
         }
     }
@@ -1212,6 +1298,8 @@ impl App {
     /// Back to the list of submitted changes.
     fn close_opened_change(&mut self) {
         self.history_open = None;
+        self.detail_source = Some(Panel::History);
+        self.detail_scroll = 0;
         self.diff_source = Panel::Files;
         self.diff_scroll = 0;
         self.diff_hscroll = 0;
@@ -1219,6 +1307,9 @@ impl App {
 
     /// What moving left or right means, which is not the same in every panel.
     fn sideways(&mut self, by: isize) {
+        if self.focus == Panel::Diff && self.detail_panel().is_some() {
+            return;
+        }
         match self.focus {
             // Long lines are truncated rather than wrapped, so the diff scrolls
             // sideways.
@@ -1513,6 +1604,7 @@ impl App {
             _ => return,
         }
         // Whatever was selected may no longer be in the list.
+        self.detail_scroll = 0;
         self.clamp_selections();
         self.file_sel = self
             .file_sel
@@ -2246,12 +2338,19 @@ impl App {
             return;
         }
         self.tab = self.tab.step(by);
+        self.detail_scroll = 0;
         self.change_sel = 0;
         self.follow_selection();
     }
 
     fn move_by(&mut self, delta: isize) {
         if self.focus == Panel::Diff {
+            if self.detail_panel().is_some() {
+                let area = crate::ui::diff_area(self.viewport, self.diff_fullscreen);
+                let max = crate::ui::detail_scroll_limit(self, area);
+                self.detail_scroll = self.detail_scroll.min(max).saturating_add_signed(delta).min(max);
+                return;
+            }
             self.diff_scroll = self.diff_scroll.saturating_add_signed(delta);
             return;
         }
@@ -2273,6 +2372,11 @@ impl App {
 
     fn move_to(&mut self, index: usize) {
         if self.focus == Panel::Diff {
+            if self.detail_panel().is_some() {
+                let area = crate::ui::diff_area(self.viewport, self.diff_fullscreen);
+                self.detail_scroll = if index == usize::MAX { crate::ui::detail_scroll_limit(self, area) } else { 0 };
+                return;
+            }
             // `G` on a diff means "as far down as it goes"; the renderer clamps.
             self.diff_scroll = if index == usize::MAX { usize::MAX } else { 0 };
             return;
@@ -2303,6 +2407,7 @@ impl App {
             }
             Panel::Changelists => {
                 if self.change_sel != index {
+                    self.detail_scroll = 0;
                     self.change_sel = index;
                     self.follow_selection();
                 }
@@ -2316,7 +2421,12 @@ impl App {
                         self.diff_hscroll = 0;
                     }
                 }
-                None => self.history_sel = index,
+                None => {
+                    if self.history_sel != index {
+                        self.detail_scroll = 0;
+                        self.history_sel = index;
+                    }
+                },
             },
             Panel::Status | Panel::Diff => {}
         }

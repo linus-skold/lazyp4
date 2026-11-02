@@ -309,6 +309,9 @@ fn spawn_input_reader(events: Sender<Event>) {
     thread::spawn(move || loop {
         match crossterm::event::read() {
             Ok(ev) => {
+                if !useful_input(&ev) {
+                    continue;
+                }
                 if events.send(Event::Input(ev)).is_err() {
                     return;
                 }
@@ -319,6 +322,14 @@ fn spawn_input_reader(events: Sender<Event>) {
             }
         }
     });
+}
+
+fn useful_input(event: &crossterm::event::Event) -> bool {
+    use crossterm::event::{Event, MouseButton, MouseEventKind};
+    match event {
+        Event::Mouse(mouse) => matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Down(MouseButton::Left)),
+        _ => true,
+    }
 }
 
 /// Point a connection at a chosen workspace, leaving it ambient when there is

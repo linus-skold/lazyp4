@@ -694,6 +694,7 @@ dependencies = [
  "p4",
  "ratatui",
  "similar",
+ "unicode-segmentation",
 ]
 
 [[package]]

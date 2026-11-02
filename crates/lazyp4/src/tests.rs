@@ -3,7 +3,7 @@
 //! A TUI cannot be driven interactively from CI, so these render the real
 //! widget tree onto a [`TestBackend`] and assert on the resulting cells.
 
-use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -563,6 +563,127 @@ fn a_stale_file_answer_is_ignored() {
     });
 
     assert!(app.files.is_empty());
+}
+
+#[test]
+fn changelist_details_follow_the_selection_and_wrap_the_description() {
+    let mut app = app();
+    let change = app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap();
+    change.description = format!("First line\n{}\nLast paragraph", "long description ".repeat(8));
+    app.focus = Panel::Changelists;
+    let out = render(&app, 100, 40);
+    assert!(out.contains("Changelist 395"), "{out}");
+    assert!(out.contains("First line"), "{out}");
+    assert!(out.contains("Last paragraph"), "{out}");
+    assert_eq!(out.matches("description").count(), 8, "{out}");
+    press(&mut app, KeyCode::Char('j'));
+    let out = render(&app, 100, 40);
+    assert!(out.contains("Changelist 308"), "{out}");
+    assert!(!out.contains("Last paragraph"), "{out}");
+    app.focus = Panel::History;
+    let out = render(&app, 100, 40);
+    assert!(out.contains("Changelist 396"), "{out}");
+    assert!(out.contains("submitted"), "{out}");
+}
+
+#[test]
+fn a_long_changelist_description_scrolls_and_returns_to_the_file_diff() {
+    let mut app = app();
+    let change = app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap();
+    change.description = (0..40).map(|i| format!("description line {i}\n")).collect();
+    app.focus = Panel::Changelists;
+    let area = ratatui::layout::Rect::new(0, 0, 120, 20);
+    assert!(!render(&app, 120, 20).contains("description line 39"));
+    for _ in 0..30 {
+        app.handle_mouse(MouseEvent { kind: MouseEventKind::ScrollDown, column: 80, row: 3, modifiers: KeyModifiers::NONE }, area);
+    }
+    assert!(render(&app, 120, 20).contains("description line 39"));
+    press(&mut app, KeyCode::Char('0'));
+    press(&mut app, KeyCode::Char('g'));
+    assert!(render(&app, 120, 20).contains("description line 0"));
+    press(&mut app, KeyCode::Char('2'));
+    press(&mut app, KeyCode::Char('j'));
+    assert!(render(&app, 120, 20).contains("+added"));
+}
+
+#[test]
+fn changelist_details_wrap_wide_characters_without_losing_text_or_adding_blank_lines() {
+    let mut app = app();
+    let change = app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap();
+    change.description = format!("{}END\n{}KATAKANA_END\n{}\nNEXT", "界".repeat(40), "ｶﾞ".repeat(40), "x".repeat(56));
+    app.focus = Panel::Changelists;
+    let out = render(&app, 100, 40);
+    assert!(out.contains("END"), "{out}");
+    assert!(out.contains("KATAKANA_END"), "{out}");
+    let lines: Vec<_> = out.lines().collect();
+    let exact = lines.iter().position(|line| line.contains(&"x".repeat(56))).unwrap();
+    assert!(lines[exact + 1].contains("NEXT"), "{out}");
+}
+
+#[test]
+fn keyboard_scrolling_moves_up_after_reaching_the_end_of_details() {
+    let mut app = app();
+    app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap().description =
+        (0..50).map(|i| format!("description line {i}\n")).collect();
+    app.focus = Panel::Changelists;
+    app.viewport = ratatui::layout::Rect::new(0, 0, 120, 20);
+    press(&mut app, KeyCode::Char('0'));
+    press(&mut app, KeyCode::End);
+    let bottom = render(&app, 120, 20);
+    assert!(bottom.contains("description line 49"));
+    for _ in 0..10 { press(&mut app, KeyCode::Down); }
+    press(&mut app, KeyCode::Up);
+    assert_ne!(render(&app, 120, 20), bottom);
+}
+
+#[test]
+fn refreshing_to_a_different_changelist_resets_detail_scroll() {
+    let mut app = app();
+    app.focus = Panel::History;
+    app.detail_scroll = 20;
+    let pending = app.pending.clone();
+    let submitted = vec![change(400, MINE, ChangeStatus::Submitted, false, "new history entry")];
+    app.handle(Event::Changes { pending, submitted });
+    assert_eq!(app.detail_scroll, 0);
+    assert!(render(&app, 120, 20).contains("new history entry"));
+}
+
+#[test]
+fn refreshing_unrelated_history_keeps_pending_description_position() {
+    let mut app = app();
+    app.focus = Panel::Changelists;
+    app.detail_scroll = 5;
+    let pending = app.pending.clone();
+    let submitted = vec![change(400, MINE, ChangeStatus::Submitted, false, "new history entry")];
+    app.handle(Event::Changes { pending, submitted });
+    assert_eq!(app.detail_scroll, 5);
+}
+
+#[test]
+fn returning_from_history_files_keeps_subsequent_detail_scrolling() {
+    let mut app = app();
+    app.submitted[0].description = (0..50).map(|i| format!("history line {i}\n")).collect();
+    press(&mut app, KeyCode::Char('4'));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Esc);
+    let area = ratatui::layout::Rect::new(0, 0, 120, 20);
+    app.handle_mouse(MouseEvent { kind: MouseEventKind::ScrollDown, column: 80, row: 3, modifiers: KeyModifiers::NONE }, area);
+    let before = app.detail_scroll;
+    assert!(before > 0);
+    press(&mut app, KeyCode::Char('0'));
+    assert_eq!(app.detail_scroll, before);
+}
+
+#[test]
+fn very_long_changelist_details_can_reach_the_end() {
+    let mut app = app();
+    app.pending.iter_mut().find(|c| c.id == ChangeId::Number(395)).unwrap().description =
+        format!("{}THE_END", "line\n".repeat(70_000));
+    app.focus = Panel::Changelists;
+    app.viewport = ratatui::layout::Rect::new(0, 0, 120, 20);
+    press(&mut app, KeyCode::Char('0'));
+    press(&mut app, KeyCode::End);
+    assert!(render(&app, 120, 20).contains("THE_END"));
 }
 
 #[test]
@@ -2639,10 +2760,7 @@ fn a_long_description_wraps_and_scrolls_to_the_cursor() {
 
     let out = render(&app, 120, 40);
     assert!(out.contains("tail"), "what is being typed must stay in view: {out}");
-    assert!(
-        !out.contains("# Do not submit"),
-        "the popup scrolled, so the start is off screen: {out}"
-    );
+    assert_eq!(out.matches("# Do not submit").count(), 1, "only the background preview shows the start: {out}");
 }
 
 #[test]
@@ -2770,6 +2888,112 @@ fn moving_between_files_resets_the_diff_scroll() {
     app.focus = Panel::Files;
     press(&mut app, KeyCode::Char('j'));
     assert_eq!(app.diff_scroll, 0, "scroll belongs to the file, not the pane");
+}
+
+#[test]
+fn mouse_wheel_scrolls_only_the_preview_under_the_pointer() {
+    let mut app = app();
+    app.diffs = vec![FileDiff {
+        depot_path: "//depot/main/AGENTS.md".into(),
+        rev: Some(3),
+        hunks: format!("@@ -1,50 +1,50 @@\n{}", (0..50).map(|n| format!(" line {n}\n")).collect::<String>()),
+    }];
+    let area = ratatui::layout::Rect::new(0, 0, 120, 20);
+    let wheel = |kind, column, row| MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
+    let before = render(&app, 120, 20);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 5), area);
+    assert_eq!(app.diff_scroll, 3);
+    assert_eq!(app.focus, Panel::Files);
+    let after = render(&app, 120, 20);
+    assert!(before.contains("line 0"));
+    assert!(!after.contains("line 0"));
+    assert!(after.contains("line 3"));
+
+    app.focus = Panel::Diff;
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 5), area);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 17), area);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 19), area);
+    assert_eq!(app.diff_scroll, 3);
+    app.modal = Modal::Help;
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 5), area);
+    assert_eq!(app.diff_scroll, 3);
+    app.modal = Modal::None;
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 80, 5), area);
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 80, 5), area);
+    assert_eq!(app.diff_scroll, 0);
+
+    app.diff_fullscreen = true;
+    app.diff_scroll = usize::MAX;
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 10, 5), area);
+    assert_eq!(app.diff_scroll, 50 + 1 - 17 - 3);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 19), area);
+    assert_eq!(app.diff_scroll, 50 + 1 - 17 - 3);
+}
+
+#[test]
+fn clicking_a_visible_file_selects_it_and_updates_the_preview() {
+    let mut app = app();
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let rendered = render(&app, 120, 40);
+    let row = rendered.lines().position(|line| line.contains("Foo.cpp")).unwrap() as u16;
+    let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 10, row, modifiers: KeyModifiers::NONE };
+    app.focus = Panel::Changelists;
+    app.diff_scroll = 7;
+    app.handle_mouse(click, area);
+    assert_eq!(app.focus, Panel::Files);
+    assert_eq!(app.browsed_file().unwrap().depot_path, "//depot/main/Foo.cpp");
+    assert_eq!(app.diff_scroll, 0);
+    assert!(render(&app, 120, 40).contains("@@ -1,3 +1,3 @@"));
+
+    app.modal = Modal::Help;
+    let previous = app.file_sel;
+    app.handle_mouse(MouseEvent { row: row - 1, ..click }, area);
+    assert_eq!(app.file_sel, previous);
+    app.modal = Modal::None;
+    app.diff_fullscreen = true;
+    app.handle_mouse(MouseEvent { row: row - 1, ..click }, area);
+    assert_eq!(app.file_sel, previous);
+}
+
+#[test]
+fn clicking_a_file_does_not_change_focus_during_filtering() {
+    let mut app = app();
+    let row = render(&app, 120, 40).lines().position(|line| line.contains("Foo.cpp")).unwrap() as u16;
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('/'));
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left), column: 10, row, modifiers: KeyModifiers::NONE,
+    }, ratatui::layout::Rect::new(0, 0, 120, 40));
+    assert_eq!(app.focus, Panel::Changelists);
+    assert_eq!(app.filtering, Some(Panel::Changelists));
+}
+
+#[test]
+fn clicking_a_file_in_a_scrolled_tree_uses_the_visible_row() {
+    let mut app = app();
+    app.files = (0..30).map(|n| file(&format!("//depot/main/File{n:02}.txt"), FileAction::Edit, false)).collect();
+    app.loose_files.clear();
+    press(&mut app, KeyCode::End);
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let out = render(&app, 120, 40);
+    let row = out.lines().position(|line| line.contains("File28.txt")).unwrap() as u16;
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left), column: 10, row, modifiers: KeyModifiers::NONE,
+    }, area);
+    assert_eq!(app.browsed_file().unwrap().depot_path, "//depot/main/File28.txt");
+}
+
+#[test]
+fn mouse_wheel_outside_the_preview_still_moves_the_focused_list() {
+    let mut app = app();
+    let before = app.file_sel;
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 10,
+        row: 10,
+        modifiers: KeyModifiers::NONE,
+    }, ratatui::layout::Rect::new(0, 0, 120, 20));
+    assert_eq!(app.file_sel, before + 1);
 }
 
 #[test]

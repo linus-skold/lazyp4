@@ -16,6 +16,10 @@ use std::io;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event as TermEvent};
+use crossterm::execute;
+use ratatui::layout::Rect;
+
 use app::App;
 use config::Config;
 use worker::Worker;
@@ -33,11 +37,40 @@ fn main() -> io::Result<()> {
     let mut app = App::new(worker, Config::load());
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, &mut app, &events);
+    let result = (|| {
+        let _mouse = MouseCapture;
+        execute!(io::stdout(), EnableMouseCapture)?;
+        run(&mut terminal, &mut app, &events)
+    })();
     ratatui::restore();
 
     app.shutdown();
     result
+}
+
+struct MouseCapture;
+
+impl Drop for MouseCapture {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+    }
+}
+
+fn handle_event(terminal: &ratatui::DefaultTerminal, app: &mut App, event: worker::Event) -> io::Result<()> {
+    match event {
+        worker::Event::Input(TermEvent::Mouse(mouse)) => {
+            let size = terminal.size()?;
+            app.viewport = Rect::new(0, 0, size.width, size.height);
+            app.handle_mouse(mouse, app.viewport);
+        }
+        worker::Event::Input(TermEvent::Key(key)) => {
+            let size = terminal.size()?;
+            app.viewport = Rect::new(0, 0, size.width, size.height);
+            app.handle(worker::Event::Input(TermEvent::Key(key)));
+        }
+        event => app.handle(event),
+    }
+    Ok(())
 }
 
 fn run(
@@ -62,10 +95,10 @@ fn run(
 
         match event {
             Some(event) => {
-                app.handle(event);
+                handle_event(terminal, app, event)?;
                 // Drain whatever else arrived so a burst redraws once.
                 while let Ok(event) = events.try_recv() {
-                    app.handle(event);
+                    handle_event(terminal, app, event)?;
                 }
             }
             None if app.busy => app.tick(),
