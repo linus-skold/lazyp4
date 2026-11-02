@@ -45,9 +45,9 @@ workflows. For this reason, `prepare-release.yml` calls `release.yml` directly.
 | `lazyp4-macos-arm64.tar.gz` | `lazyp4` and `README.md` |
 | `lazyp4_<version>_amd64.deb` | Installs `/usr/bin/lazyp4`. nfpm makes it from `packaging/nfpm.yaml` |
 | `lazyp4-<version>-1.x86_64.rpm` | The same, for RPM |
-| `SHA256SUMS` | The install scripts check their download against this file |
+| `SHA256SUMS` | The install scripts and `lazyp4 --update` check their download against this file |
 
-Do not rename the archives. The install scripts download them by name.
+Do not rename the archives. The install scripts download them by name. So does `lazyp4 --update`, which also reads `SHA256SUMS`, and takes the binary from the archive by its exact name (`lazyp4` or `lazyp4.exe`). It uses the `/releases/latest` API, so it sees a release only after you publish it.
 
 ## Limits
 

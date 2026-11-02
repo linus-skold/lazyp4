@@ -270,3 +270,28 @@ the changelist is left exactly as the server sent it.
 
 While it sits still, lazyp4 checks every five seconds whether `p4` has been used
 in another window, and reloads if it has. `r` forces it.
+
+## Updating lazyp4
+
+When a newer release exists, the Status panel shows `new <version>` on its
+bottom border, with the action to take. For a copy from the install script or a
+release archive, the action is `lazyp4 --update`. For a `.deb`, an `.rpm`, Nix or
+`cargo install`, the note names that tool and never says `--update`. A
+developer build in a cargo `target` directory shows no note.
+
+`lazyp4 --update` starts no TUI and needs no Perforce connection. It does these
+steps:
+
+1. It prints the current and the latest version. If you have the latest or a
+   newer version, it stops and changes nothing.
+2. It downloads the archive for your platform and `SHA256SUMS` from the release,
+   over HTTPS only.
+3. It checks the archive against `SHA256SUMS`. If the check fails, it stops.
+4. It takes the one binary from the archive and replaces the running binary
+   with a rename in the same directory.
+
+On failure the old binary stays in place and the exit code is not zero. If
+there is no published release, or no archive for your platform, it says so. If
+the directory is not writable, it names the directory. For a copy that a package
+manager or cargo owns, it prints how to update with that tool and changes
+nothing.
