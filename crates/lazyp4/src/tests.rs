@@ -2983,6 +2983,67 @@ fn clicking_a_file_in_a_scrolled_tree_uses_the_visible_row() {
     assert_eq!(app.browsed_file().unwrap().depot_path, "//depot/main/File28.txt");
 }
 
+fn many_files(count: usize) -> App {
+    let mut app = app();
+    app.files = (0..count).map(|n| file(&format!("//depot/main/File{n:02}.txt"), FileAction::Edit, false)).collect();
+    app.loose_files.clear();
+    app
+}
+
+/// The `FileNN` names in the Files pane, top to bottom.
+fn names(out: &str) -> Vec<String> {
+    // Skip the status panel, and keep to the left column.
+    out.lines()
+        .skip(6)
+        .filter_map(|line| line.chars().take(50).collect::<String>().find(".txt").map(|at| (line, at)))
+        .filter_map(|(line, at)| line.get(at - 6..at))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn moving_up_does_not_scroll_the_list_until_the_top_edge() {
+    let mut app = many_files(30);
+    press(&mut app, KeyCode::End);
+    let at_bottom = names(&render(&app, 120, 40));
+    press(&mut app, KeyCode::Up);
+    let after_up = names(&render(&app, 120, 40));
+    assert_eq!(at_bottom, after_up, "the visible rows must stay put");
+    assert_eq!(after_up.last().map(String::as_str), Some("File29"));
+}
+
+#[test]
+fn clicking_after_moving_up_selects_the_row_under_the_pointer() {
+    let mut app = many_files(30);
+    press(&mut app, KeyCode::End);
+    render(&app, 120, 40);
+    for _ in 0..3 {
+        press(&mut app, KeyCode::Up);
+        render(&app, 120, 40);
+    }
+    let out = render(&app, 120, 40);
+    let row = out.lines().position(|line| line.contains("File28.txt")).unwrap() as u16;
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left), column: 10, row, modifiers: KeyModifiers::NONE,
+    }, ratatui::layout::Rect::new(0, 0, 120, 40));
+    assert_eq!(app.browsed_file().unwrap().depot_path, "//depot/main/File28.txt");
+    let again = render(&app, 120, 40);
+    let moved = again.lines().skip(6).position(|line| line.contains("File28.txt")).map(|n| n + 6);
+    assert_eq!(moved, Some(row as usize));
+}
+
+#[test]
+fn a_shorter_list_leaves_no_blank_rows_at_the_end() {
+    let mut app = many_files(30);
+    press(&mut app, KeyCode::End);
+    render(&app, 120, 40);
+    app.files.truncate(6);
+    app.file_sel = 3;
+    let out = render(&app, 120, 40);
+    assert!(out.contains("File00.txt"), "{out}");
+    assert!(out.contains("File05.txt"), "{out}");
+}
+
 #[test]
 fn mouse_wheel_outside_the_preview_still_moves_the_focused_list() {
     let mut app = app();
