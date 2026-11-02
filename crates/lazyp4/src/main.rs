@@ -10,6 +10,7 @@ mod tests;
 mod text;
 mod tree;
 mod ui;
+mod update;
 mod worker;
 
 use std::io;
@@ -33,8 +34,14 @@ const TICK: Duration = Duration::from_millis(120);
 const POLL: Duration = Duration::from_secs(5);
 
 fn main() -> io::Result<()> {
-    let (worker, events) = Worker::spawn();
-    let mut app = App::new(worker, Config::load());
+    // No worker and no terminal: this must work without a Perforce server.
+    if std::env::args().skip(1).any(|a| a == "--update") {
+        std::process::exit(update::run());
+    }
+
+    let config = Config::load();
+    let (worker, events) = Worker::spawn(config.update_check);
+    let mut app = App::new(worker, config);
 
     let mut terminal = ratatui::init();
     let result = (|| {

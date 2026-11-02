@@ -239,6 +239,8 @@ pub struct App {
     pub modal: Modal,
     pub quit: bool,
     pub busy: bool,
+    /// A newer release, once the background check has found one.
+    pub update: Option<crate::update::Notice>,
 
     pub info: Option<ServerInfo>,
 
@@ -376,6 +378,7 @@ impl App {
             modal: Modal::None,
             quit: false,
             busy: true,
+            update: None,
             info: None,
             pending: Vec::new(),
             tab: ChangeTab::Local,
@@ -967,6 +970,7 @@ impl App {
                 self.workspaces = workspaces;
             }
             Event::Notice(text) => self.notify(text),
+            Event::Update(notice) => self.update = Some(notice),
             Event::RevertPreview { files, preview } => self.confirm_revert(files, preview),
             Event::Unresolved(files) => {
                 self.unresolved = files;
