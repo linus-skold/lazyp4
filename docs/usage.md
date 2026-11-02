@@ -287,11 +287,21 @@ steps:
 2. It downloads the archive for your platform and `SHA256SUMS` from the release,
    over HTTPS only.
 3. It checks the archive against `SHA256SUMS`. If the check fails, it stops.
-4. It takes the one binary from the archive and replaces the running binary
-   with a rename in the same directory.
+4. It takes the one binary from the archive and writes it to a temp file in
+   the same directory. On Linux and macOS, one rename puts it in place of the
+   running binary. On Windows, it renames the running `lazyp4.exe` to
+   `lazyp4.exe.old`, then renames the temp file to `lazyp4.exe`.
+
+On Windows, the `.old` file stays after the update, because the running
+program holds it. The next `--update` removes it. If an older lazyp4 still
+runs from it, the update uses `lazyp4.exe.old.<pid>` and goes on. If the
+second rename fails, lazyp4 renames the `.old` file back. If that also fails,
+the message names the `.old` file. Rename it back to `lazyp4.exe` to
+recover. The temp file then stays, and holds the new binary.
 
 On failure the old binary stays in place and the exit code is not zero. If
 there is no published release, or no archive for your platform, it says so. If
 the directory is not writable, it names the directory. For a copy that a package
-manager or cargo owns, it prints how to update with that tool and changes
-nothing.
+manager, Nix or cargo owns, and for a developer build, it changes nothing,
+prints how to update with that tool on stderr, and exits with a code that is
+not zero.

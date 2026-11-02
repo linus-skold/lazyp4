@@ -60,8 +60,8 @@ lazyp4 --update
 
 It downloads the latest release, checks it against `SHA256SUMS`, and replaces
 the binary. It does not start the TUI. If the copy came from a `.deb`, an
-`.rpm`, Nix or `cargo install`, `--update` changes nothing. It tells you how
-to update with that tool.
+`.rpm`, Nix or `cargo install`, `--update` changes nothing and exits with a code that is
+not zero. It tells you how to update with that tool.
 
 Once a day, lazyp4 looks for a newer release in the background and shows a
 note in the Status panel. It sends no data about you or your server. To turn

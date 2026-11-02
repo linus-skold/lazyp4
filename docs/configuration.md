@@ -85,8 +85,9 @@ it does not understand is reported rather than skipped.
 ## Updates
 
 lazyp4 looks for a newer release at most once a day. It does this in the
-background, and a failure shows nothing. The result is kept in a small file, so
-a restart does not ask again:
+background, and a failure shows nothing. lazyp4 writes the result to a small
+file, so a restart does not ask again. It writes the date before it sends the
+request, and it sends no request if it cannot write the file:
 
 | Platform | Path |
 | --- | --- |
