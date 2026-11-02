@@ -2,13 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::{Position, Rect};
 use p4::{
     AnnotatedLine, ChangeId, ChangeStatus, Changelist, FileDiff, Resolution, RevertPreview,
     Revision, ServerInfo, Stream, Unresolved, Workspace,
 };
 
 use crate::config::{Action, Config, Key};
+use crate::diffview;
 use crate::editor::{Editor, Outcome};
 use crate::ignore;
 use crate::text;
@@ -817,6 +819,40 @@ impl App {
         if self.log.len() > 500 {
             self.log.drain(..self.log.len() - 500);
         }
+    }
+
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect) {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if self.modal == Modal::None && self.picker.is_none() && self.editor.is_none() && self.confirm.is_none() && self.filtering.is_none() {
+                if let Some(index) = crate::ui::file_row_at(self, area, Position::new(mouse.column, mouse.row)) {
+                    self.focus = Panel::Files;
+                    self.set_selection(index);
+                }
+            }
+            return;
+        }
+        let (delta, key) = match mouse.kind {
+            MouseEventKind::ScrollUp => (-3, KeyCode::Up),
+            MouseEventKind::ScrollDown => (3, KeyCode::Down),
+            _ => return,
+        };
+        let diff_area = crate::ui::diff_area(area, self.diff_fullscreen);
+        if self.modal != Modal::None || self.picker.is_some() || self.editor.is_some() || self.confirm.is_some()
+            || !diff_area.contains(Position::new(mouse.column, mouse.row))
+        {
+            // Terminals commonly translate wheel events into arrow keys in the alternate screen.
+            if self.focus != Panel::Diff || self.modal != Modal::None || self.picker.is_some() || self.editor.is_some() || self.confirm.is_some() {
+                self.on_key(KeyEvent::new(key, mouse.modifiers));
+            }
+            return;
+        }
+        let Some(diff) = self.selected_diff() else {
+            return;
+        };
+        let rows = diffview::rows(&diff.hunks, self.config.tab_width).len();
+        let visible = diff_area.height.saturating_sub(2) as usize;
+        let max = rows.saturating_sub(visible);
+        self.diff_scroll = self.diff_scroll.min(max).saturating_add_signed(delta).min(max);
     }
 
     pub fn handle(&mut self, event: Event) {

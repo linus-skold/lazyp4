@@ -3,7 +3,7 @@
 //! A TUI cannot be driven interactively from CI, so these render the real
 //! widget tree onto a [`TestBackend`] and assert on the resulting cells.
 
-use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use p4::{ChangeId, ChangeStatus, Changelist, FileAction, FileDiff, ServerInfo};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -2770,6 +2770,112 @@ fn moving_between_files_resets_the_diff_scroll() {
     app.focus = Panel::Files;
     press(&mut app, KeyCode::Char('j'));
     assert_eq!(app.diff_scroll, 0, "scroll belongs to the file, not the pane");
+}
+
+#[test]
+fn mouse_wheel_scrolls_only_the_preview_under_the_pointer() {
+    let mut app = app();
+    app.diffs = vec![FileDiff {
+        depot_path: "//depot/main/AGENTS.md".into(),
+        rev: Some(3),
+        hunks: format!("@@ -1,50 +1,50 @@\n{}", (0..50).map(|n| format!(" line {n}\n")).collect::<String>()),
+    }];
+    let area = ratatui::layout::Rect::new(0, 0, 120, 20);
+    let wheel = |kind, column, row| MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
+    let before = render(&app, 120, 20);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 5), area);
+    assert_eq!(app.diff_scroll, 3);
+    assert_eq!(app.focus, Panel::Files);
+    let after = render(&app, 120, 20);
+    assert!(before.contains("line 0"));
+    assert!(!after.contains("line 0"));
+    assert!(after.contains("line 3"));
+
+    app.focus = Panel::Diff;
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 5), area);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 17), area);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 19), area);
+    assert_eq!(app.diff_scroll, 3);
+    app.modal = Modal::Help;
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 80, 5), area);
+    assert_eq!(app.diff_scroll, 3);
+    app.modal = Modal::None;
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 80, 5), area);
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 80, 5), area);
+    assert_eq!(app.diff_scroll, 0);
+
+    app.diff_fullscreen = true;
+    app.diff_scroll = usize::MAX;
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 10, 5), area);
+    assert_eq!(app.diff_scroll, 50 + 1 - 17 - 3);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 19), area);
+    assert_eq!(app.diff_scroll, 50 + 1 - 17 - 3);
+}
+
+#[test]
+fn clicking_a_visible_file_selects_it_and_updates_the_preview() {
+    let mut app = app();
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let rendered = render(&app, 120, 40);
+    let row = rendered.lines().position(|line| line.contains("Foo.cpp")).unwrap() as u16;
+    let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 10, row, modifiers: KeyModifiers::NONE };
+    app.focus = Panel::Changelists;
+    app.diff_scroll = 7;
+    app.handle_mouse(click, area);
+    assert_eq!(app.focus, Panel::Files);
+    assert_eq!(app.browsed_file().unwrap().depot_path, "//depot/main/Foo.cpp");
+    assert_eq!(app.diff_scroll, 0);
+    assert!(render(&app, 120, 40).contains("@@ -1,3 +1,3 @@"));
+
+    app.modal = Modal::Help;
+    let previous = app.file_sel;
+    app.handle_mouse(MouseEvent { row: row - 1, ..click }, area);
+    assert_eq!(app.file_sel, previous);
+    app.modal = Modal::None;
+    app.diff_fullscreen = true;
+    app.handle_mouse(MouseEvent { row: row - 1, ..click }, area);
+    assert_eq!(app.file_sel, previous);
+}
+
+#[test]
+fn clicking_a_file_does_not_change_focus_during_filtering() {
+    let mut app = app();
+    let row = render(&app, 120, 40).lines().position(|line| line.contains("Foo.cpp")).unwrap() as u16;
+    app.focus = Panel::Changelists;
+    press(&mut app, KeyCode::Char('/'));
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left), column: 10, row, modifiers: KeyModifiers::NONE,
+    }, ratatui::layout::Rect::new(0, 0, 120, 40));
+    assert_eq!(app.focus, Panel::Changelists);
+    assert_eq!(app.filtering, Some(Panel::Changelists));
+}
+
+#[test]
+fn clicking_a_file_in_a_scrolled_tree_uses_the_visible_row() {
+    let mut app = app();
+    app.files = (0..30).map(|n| file(&format!("//depot/main/File{n:02}.txt"), FileAction::Edit, false)).collect();
+    app.loose_files.clear();
+    press(&mut app, KeyCode::End);
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let out = render(&app, 120, 40);
+    let row = out.lines().position(|line| line.contains("File28.txt")).unwrap() as u16;
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left), column: 10, row, modifiers: KeyModifiers::NONE,
+    }, area);
+    assert_eq!(app.browsed_file().unwrap().depot_path, "//depot/main/File28.txt");
+}
+
+#[test]
+fn mouse_wheel_outside_the_preview_still_moves_the_focused_list() {
+    let mut app = app();
+    let before = app.file_sel;
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 10,
+        row: 10,
+        modifiers: KeyModifiers::NONE,
+    }, ratatui::layout::Rect::new(0, 0, 120, 20));
+    assert_eq!(app.file_sel, before + 1);
 }
 
 #[test]

@@ -1,9 +1,10 @@
 //! Rendering. Layout only — every decision lives in [`crate::app`].
 
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, StatefulWidget};
 use ratatui::Frame;
 
 use p4::{Changelist, FileAction};
@@ -21,6 +22,58 @@ use crate::worker::FileEntry;
 /// Braille frames, which turn in place rather than shifting the text after them.
 const SPINNER: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
+pub fn diff_area(area: Rect, fullscreen: bool) -> Rect {
+    let [body, _] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+    if fullscreen {
+        return body;
+    }
+    let [_, right] =
+        Layout::horizontal([Constraint::Percentage(42), Constraint::Min(0)]).areas(body);
+    let [diff, _] = Layout::vertical([Constraint::Min(0), Constraint::Length(6)]).areas(right);
+    diff
+}
+
+fn left_areas(body: Rect, app: &App) -> [Rect; 4] {
+    let [left, _] = Layout::horizontal([Constraint::Percentage(42), Constraint::Min(0)]).areas(body);
+    let weight = |panel: Panel| -> Constraint {
+        match (app.zoom, app.focus == panel) {
+            (true, true) => Constraint::Fill(12),
+            (true, false) => Constraint::Length(3),
+            _ => Constraint::Fill(1),
+        }
+    };
+    Layout::vertical([
+        Constraint::Length(6),
+        weight(Panel::Files),
+        weight(Panel::Changelists),
+        weight(Panel::History),
+    ]).areas(left)
+}
+
+pub fn file_row_at(app: &App, area: Rect, position: Position) -> Option<usize> {
+    if app.diff_fullscreen {
+        return None;
+    }
+    let [body, _] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+    let [_, files, _, _] = left_areas(body, app);
+    let inner = Block::bordered().inner(files);
+    if !inner.contains(position) {
+        return None;
+    }
+    let rows = app.file_rows();
+    let selected = rows.iter().enumerate().filter(|(_, row)| !matches!(row, FileRow::Header(_)))
+        .nth(app.file_sel).map(|(index, _)| index);
+    let mut state = ListState::default().with_selected(selected);
+    let items = vec![ListItem::new(""); rows.len()];
+    StatefulWidget::render(List::new(items).block(Block::bordered()), files, &mut Buffer::empty(files), &mut state);
+    let index = state.offset() + usize::from(position.y - inner.y);
+    if matches!(rows.get(index), Some(FileRow::Dir { .. } | FileRow::File { .. })) {
+        Some(rows[..index].iter().filter(|row| !matches!(row, FileRow::Header(_))).count())
+    } else {
+        None
+    }
+}
+
 pub fn draw(frame: &mut Frame, app: &App) {
     let t = &app.config.theme;
     let [body, status_bar] =
@@ -35,30 +88,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let [left, right] =
+    let [_, right] =
         Layout::horizontal([Constraint::Percentage(42), Constraint::Min(0)]).areas(body);
-    // Status is fixed; the three lists share what is left. Zooming gives the
-    // focused one nearly all of it rather than hiding the others outright, so
-    // the column still reads as a column.
-    let weight = |panel: Panel| -> Constraint {
-        match (app.zoom, app.focus == panel) {
-            (true, true) => Constraint::Fill(12),
-            (true, false) => Constraint::Length(3),
-            _ => Constraint::Fill(1),
-        }
-    };
-    let [status, files, changes, history] = Layout::vertical([
-        Constraint::Length(6),
-        weight(Panel::Files),
-        weight(Panel::Changelists),
-        weight(Panel::History),
-    ])
-    .areas(left);
+    let [status, files, changes, history] = left_areas(body, app);
 
     draw_status(frame, app, status);
     // The log sits under the diff: four lines, fixed, so it says what is
     // happening without taking room the diff can use as the window grows.
-    let [diff, log] = Layout::vertical([Constraint::Min(0), Constraint::Length(6)]).areas(right);
+    let [_, log] = Layout::vertical([Constraint::Min(0), Constraint::Length(6)]).areas(right);
+    let diff = diff_area(frame.area(), false);
 
     draw_files(frame, app, files);
     draw_changes(frame, app, changes);
