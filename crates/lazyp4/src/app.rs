@@ -189,6 +189,8 @@ pub struct Picker {
     pub title: String,
     pub options: Vec<Destination>,
     pub sel: usize,
+    /// First visible row, kept between frames by the renderer.
+    pub scroll: std::cell::Cell<usize>,
 }
 
 /// A question that must be answered before something irreversible happens.
@@ -332,6 +334,8 @@ pub struct App {
 
     /// Give the focused left-hand panel the whole column.
     pub zoom: bool,
+    /// List offsets, written by the renderer.
+    pub scroll: crate::ui::ListScroll,
 
     /// Advances while a command is in flight, so the spinner turns.
     pub spinner: usize,
@@ -406,6 +410,7 @@ impl App {
             workspaces_sel: 0,
             notice: None,
             zoom: false,
+            scroll: Default::default(),
             spinner: 0,
             external: None,
             filters: HashMap::new(),
@@ -2292,6 +2297,7 @@ impl App {
             title,
             options,
             sel: 0,
+            scroll: Default::default(),
         });
     }
 

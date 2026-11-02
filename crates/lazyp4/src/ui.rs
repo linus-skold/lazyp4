@@ -1,10 +1,12 @@
 //! Rendering. Layout only — every decision lives in [`crate::app`].
 
-use ratatui::buffer::{Buffer, CellWidth};
+use std::cell::Cell;
+
+use ratatui::buffer::CellWidth;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, StatefulWidget};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -51,6 +53,72 @@ fn left_areas(body: Rect, app: &App) -> [Rect; 4] {
     ]).areas(left)
 }
 
+/// First visible row of each list. The renderer keeps it between frames, so a
+/// list scrolls the same way in both directions.
+#[derive(Default)]
+pub struct ListScroll {
+    files: Cell<usize>,
+    opened: Cell<usize>,
+    changes: Cell<usize>,
+    history: Cell<usize>,
+    workspaces: Cell<usize>,
+    streams: Cell<usize>,
+    unresolved: Cell<usize>,
+    blame: Cell<usize>,
+    revisions: Cell<usize>,
+}
+
+impl ListScroll {
+    /// A modal that opens again must not start at an old offset.
+    fn close_unused(&self, open: Modal) {
+        let unused = [
+            (Modal::Workspaces, &self.workspaces),
+            (Modal::Streams, &self.streams),
+            (Modal::Resolve, &self.unresolved),
+            (Modal::Blame, &self.blame),
+            (Modal::History, &self.revisions),
+        ];
+        for (modal, offset) in unused {
+            if modal != open {
+                offset.set(0);
+            }
+        }
+    }
+}
+
+/// The offset that keeps the selection visible with the least movement, and
+/// leaves no blank rows at the end when the list can fill the pane.
+fn settle(offset: usize, len: usize, rows: usize, selected: Option<usize>) -> usize {
+    let mut offset = offset.min(len.saturating_sub(rows));
+    if let Some(selected) = selected {
+        if selected < offset {
+            offset = selected;
+        } else if rows > 0 && selected >= offset + rows {
+            offset = selected + 1 - rows;
+        }
+    }
+    offset
+}
+
+fn render_list(
+    frame: &mut Frame,
+    list: List<'_>,
+    area: Rect,
+    rows: u16,
+    selected: Option<usize>,
+    offset: &Cell<usize>,
+) {
+    let start = settle(offset.get(), list.len(), usize::from(rows), selected);
+    let mut state = ListState::default().with_offset(start).with_selected(selected);
+    frame.render_stateful_widget(list, area, &mut state);
+    offset.set(state.offset());
+}
+
+/// Rows inside a bordered block.
+fn bordered_rows(area: Rect) -> u16 {
+    Block::bordered().inner(area).height
+}
+
 pub fn file_row_at(app: &App, area: Rect, position: Position) -> Option<usize> {
     if app.diff_fullscreen {
         return None;
@@ -64,10 +132,8 @@ pub fn file_row_at(app: &App, area: Rect, position: Position) -> Option<usize> {
     let rows = app.file_rows();
     let selected = rows.iter().enumerate().filter(|(_, row)| !matches!(row, FileRow::Header(_)))
         .nth(app.file_sel).map(|(index, _)| index);
-    let mut state = ListState::default().with_selected(selected);
-    let items = vec![ListItem::new(""); rows.len()];
-    StatefulWidget::render(List::new(items).block(Block::bordered()), files, &mut Buffer::empty(files), &mut state);
-    let index = state.offset() + usize::from(position.y - inner.y);
+    let offset = settle(app.scroll.files.get(), rows.len(), usize::from(inner.height), selected);
+    let index = offset + usize::from(position.y - inner.y);
     if matches!(rows.get(index), Some(FileRow::Dir { .. } | FileRow::File { .. })) {
         Some(rows[..index].iter().filter(|row| !matches!(row, FileRow::Header(_))).count())
     } else {
@@ -106,6 +172,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_command_log(frame, app, log);
     draw_status_bar(frame, app, status_bar);
 
+    app.scroll.close_unused(app.modal);
     match app.modal {
         Modal::None => {}
         Modal::Help => draw_help(frame, t, &app.config.keys),
@@ -188,11 +255,13 @@ fn draw_workspaces(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let mut state = ListState::default().with_selected(Some(app.workspaces_sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items).block(block).highlight_style(selection_style(t, true)),
         area,
-        &mut state,
+        bordered_rows(area),
+        Some(app.workspaces_sel),
+        &app.scroll.workspaces,
     );
 }
 
@@ -250,11 +319,13 @@ fn draw_streams(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let mut state = ListState::default().with_selected(Some(app.streams_sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items).block(block).highlight_style(selection_style(t, true)),
         area,
-        &mut state,
+        bordered_rows(area),
+        Some(app.streams_sel),
+        &app.scroll.streams,
     );
 }
 
@@ -312,11 +383,13 @@ fn draw_resolve(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let mut state = ListState::default().with_selected(Some(app.unresolved_sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items).block(block).highlight_style(selection_style(t, true)),
         area,
-        &mut state,
+        bordered_rows(area),
+        Some(app.unresolved_sel),
+        &app.scroll.unresolved,
     );
 }
 
@@ -386,11 +459,13 @@ fn draw_blame(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let mut state = ListState::default().with_selected(Some(app.blame_sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items).block(block).highlight_style(selection_style(t, true)),
         area,
-        &mut state,
+        bordered_rows(area),
+        Some(app.blame_sel),
+        &app.scroll.blame,
     );
 }
 
@@ -453,11 +528,13 @@ fn draw_file_history(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let mut state = ListState::default().with_selected(Some(app.history_rev_sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items).block(block).highlight_style(selection_style(t, true)),
         area,
-        &mut state,
+        bordered_rows(area),
+        Some(app.history_rev_sel),
+        &app.scroll.revisions,
     );
 }
 
@@ -536,13 +613,15 @@ fn draw_picker(frame: &mut Frame, t: &Theme, picker: &Picker) {
         })
         .collect();
 
-    let mut state = ListState::default().with_selected(Some(picker.sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items)
             .block(block)
             .highlight_style(selection_style(t, true)),
         area,
-        &mut state,
+        bordered_rows(area),
+        Some(picker.sel),
+        &picker.scroll,
     );
 }
 
@@ -750,11 +829,13 @@ fn draw_changes(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .map(|cl| change_item(t, cl, app.my_client()))
         .collect();
-    let mut state = ListState::default().with_selected(Some(app.change_sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items).highlight_style(selection_style(t, app.focus == Panel::Changelists)),
         list,
-        &mut state,
+        list.height,
+        Some(app.change_sel),
+        &app.scroll.changes,
     );
 }
 
@@ -799,6 +880,7 @@ fn draw_history(frame: &mut Frame, app: &App, area: Rect) {
             Panel::History,
             app.opened_rows(),
             open.sel,
+            &app.scroll.opened,
             empty,
         );
         return;
@@ -810,13 +892,15 @@ fn draw_history(frame: &mut Frame, app: &App, area: Rect) {
         .map(|cl| change_item(t, cl, app.my_client()))
         .collect();
     let count = format!("({})", visible.len());
-    let mut state = ListState::default().with_selected(Some(app.history_sel));
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items)
             .block(panel_block(app, Panel::History, Some(count)))
             .highlight_style(selection_style(t, app.focus == Panel::History)),
         area,
-        &mut state,
+        bordered_rows(area),
+        Some(app.history_sel),
+        &app.scroll.history,
     );
 }
 
@@ -845,6 +929,7 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         Panel::Files,
         app.file_rows(),
         app.file_sel,
+        &app.scroll.files,
         empty,
     );
 }
@@ -860,6 +945,7 @@ fn draw_tree_rows(
     panel: Panel,
     rows: Vec<FileRow<'_>>,
     sel: usize,
+    offset: &Cell<usize>,
     empty: &str,
 ) {
     let t = &app.config.theme;
@@ -918,13 +1004,15 @@ fn draw_tree_rows(
         })
         .collect();
 
-    let mut state = ListState::default().with_selected(selected_row);
-    frame.render_stateful_widget(
+    render_list(
+        frame,
         List::new(items)
             .block(block)
             .highlight_style(selection_style(t, app.focus == panel)),
         area,
-        &mut state,
+        bordered_rows(area),
+        selected_row,
+        offset,
     );
 }
 
